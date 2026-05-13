@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "description": "Word+IPA specific overrides for improved zhuyin display.",
+  "word_ipa_overrides": [
+    {
+      "word_norm": "he'll",
+      "ipa": ["h", "i", "l"],
+      "zhuyin_plus": ["ㄏ", "ㄧ(微)", "ㄛ"]
+    },
+    {
+      "word_norm": "hell",
+      "ipa": ["h", "ɛ", "l"],
+      "zhuyin_plus": ["ㄏ", "ㄝ", "ㄛ"]
+    },
+    {
+      "word_norm": "ear",
+      "ipa": ["i", "ɹ"],
+      "zhuyin_plus": ["ㄧㄦ", ""]
+    }
+  ]
+}

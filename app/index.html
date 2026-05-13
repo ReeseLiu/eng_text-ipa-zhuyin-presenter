@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Text IPA Zhuyin Presenter</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="edit-mode">
+    <div class="app-shell">
+      <aside class="side-panel">
+        <section class="brand">
+          <h1>Text IPA Zhuyin Presenter</h1>
+          <p>文字轉 IPA / 改良注音。MVP 不含音檔播放。</p>
+        </section>
+
+        <section class="panel-group">
+          <label for="txtInput">匯入 .txt</label>
+          <input id="txtInput" type="file" accept=".txt,text/plain">
+          <p class="hint">也可直接在下方貼上文字。</p>
+        </section>
+
+        <section class="panel-group">
+          <label for="textInput">文字內容</label>
+          <textarea id="textInput" placeholder="Paste text here..."></textarea>
+          <button id="processBtn" class="primary" type="button">處理文字</button>
+          <p id="statusLine" class="status-line">尚未載入文字。</p>
+        </section>
+
+        <section class="panel-group">
+          <label for="displaySystemSelect">顯示系統</label>
+          <select id="displaySystemSelect">
+            <option value="ipa">文字 + IPA</option>
+            <option value="zhuyin_plus">文字 + 改良注音</option>
+          </select>
+        </section>
+
+        <section class="panel-group">
+          <label id="keyboardLabel">音標小鍵盤</label>
+          <div id="phonemeKeyboard" class="phoneme-keyboard"></div>
+          <p id="keyboardHelp">點選符號插入目前編輯欄位。</p>
+        </section>
+
+        <section class="panel-group">
+          <label for="sentenceSelect">句子</label>
+          <select id="sentenceSelect"></select>
+          <div class="jump-controls">
+            <button id="prevSentenceBtn" type="button">上一句</button>
+            <button id="nextSentenceBtn" type="button">下一句</button>
+          </div>
+        </section>
+
+        <section class="panel-group button-stack">
+          <button id="editModeBtn" class="secondary" type="button">編輯模式</button>
+          <button id="presentationModeBtn" class="secondary" type="button">展示模式</button>
+          <button id="exportJsonBtn" class="secondary" type="button">匯出 JSON</button>
+        </section>
+      </aside>
+
+      <main class="content">
+        <section id="editSection" class="edit-section panel-card">
+          <header class="section-header">
+            <div>
+              <p class="eyebrow">Edit Mode</p>
+              <h2>句子與單字編輯</h2>
+            </div>
+            <p class="mode-help">文字改動會重新查 IPA 與注音；IPA 改動會重新轉注音；注音改動會覆寫展示。</p>
+          </header>
+          <div id="sentenceEditor" class="sentence-editor empty-state">請先匯入或貼上文字。</div>
+        </section>
+
+        <section id="presentationSection" class="presentation-section" hidden>
+          <div class="presentation-stage">
+            <p id="presentationSentenceText" class="presentation-sentence-text">請先匯入文字</p>
+            <div id="presentationPhonemeLine" class="presentation-phoneme-line"></div>
+            <div class="presentation-main-controls">
+              <button id="presentationPrevSentenceBtn" class="presentation-main-btn" type="button" aria-label="上一句">←</button>
+              <button id="presentationNextSentenceBtn" class="presentation-main-btn" type="button" aria-label="下一句">→</button>
+            </div>
+          </div>
+          <div class="presentation-floating presentation-utility-cluster">
+            <select id="presentationDisplaySystemSelect" aria-label="顯示系統">
+              <option value="ipa">IPA</option>
+              <option value="zhuyin_plus">改良注音</option>
+            </select>
+            <button id="presentationReturnBtn" class="presentation-utility-btn presentation-return-btn" type="button" aria-label="回編輯模式">↩</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="browser_data.js"></script>
+    <script src="browser_pipeline.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

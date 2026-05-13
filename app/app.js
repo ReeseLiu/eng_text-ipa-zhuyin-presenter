@@ -1,0 +1,1032 @@
+const state = {
+  payload: null,
+  sentenceIndex: 0,
+  displaySystem: "ipa",
+  viewMode: "edit",
+  displayTable: {},
+  activeEditInput: null,
+  activeEditMeta: null,
+};
+
+const el = {
+  txtInput: document.getElementById("txtInput"),
+  textInput: document.getElementById("textInput"),
+  processBtn: document.getElementById("processBtn"),
+  statusLine: document.getElementById("statusLine"),
+  displaySystemSelect: document.getElementById("displaySystemSelect"),
+  keyboardLabel: document.getElementById("keyboardLabel"),
+  phonemeKeyboard: document.getElementById("phonemeKeyboard"),
+  keyboardHelp: document.getElementById("keyboardHelp"),
+  sentenceSelect: document.getElementById("sentenceSelect"),
+  prevSentenceBtn: document.getElementById("prevSentenceBtn"),
+  nextSentenceBtn: document.getElementById("nextSentenceBtn"),
+  editModeBtn: document.getElementById("editModeBtn"),
+  presentationModeBtn: document.getElementById("presentationModeBtn"),
+  exportJsonBtn: document.getElementById("exportJsonBtn"),
+  editSection: document.getElementById("editSection"),
+  sentenceEditor: document.getElementById("sentenceEditor"),
+  presentationSection: document.getElementById("presentationSection"),
+  presentationSentenceText: document.getElementById("presentationSentenceText"),
+  presentationPhonemeLine: document.getElementById("presentationPhonemeLine"),
+  presentationPrevSentenceBtn: document.getElementById("presentationPrevSentenceBtn"),
+  presentationNextSentenceBtn: document.getElementById("presentationNextSentenceBtn"),
+  presentationDisplaySystemSelect: document.getElementById("presentationDisplaySystemSelect"),
+  presentationReturnBtn: document.getElementById("presentationReturnBtn"),
+};
+
+const DISPLAY_LABEL = {
+  ipa: "IPA",
+  zhuyin_plus: "改良注音",
+};
+
+const PRESENTATION_SLOT_ORDER = ["C1", "V", "C2"];
+const browserPipeline = typeof window.createBrowserPipeline === "function"
+  ? window.createBrowserPipeline(window.BROWSER_DATA || {})
+  : null;
+
+async function postJson(url, body) {
+  if (browserPipeline) {
+    if (url === "/api/process_text") {
+      return browserPipeline.processText(body?.text || "", body?.source || "inline");
+    }
+    if (url === "/api/reprocess_sentence") {
+      return { sentence: browserPipeline.processSentence(body?.text || "", body?.sentence_id || "1") };
+    }
+    if (url === "/api/reprocess_word") {
+      return { word: browserPipeline.processWord(body?.word || "", body?.context || null) };
+    }
+    if (url === "/api/display_for_ipa") {
+      return browserPipeline.displayForIpa(
+        body?.ipa || [],
+        body?.word || "",
+        Array.isArray(body?.stress_levels) ? body.stress_levels : [],
+      );
+    }
+    if (url === "/api/export_json") {
+      return browserPipeline.exportJson(body?.payload && typeof body.payload === "object" ? body.payload : body || {});
+    }
+    throw new Error(`Unsupported route in browser mode: ${url}`);
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.error?.message || `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function setStatus(message, isError = false) {
+  el.statusLine.textContent = message;
+  el.statusLine.style.color = isError ? "var(--danger)" : "var(--text-muted)";
+}
+
+function keyboardHelpText() {
+  return state.displaySystem === "ipa"
+    ? "點選符號插入目前 IPA 編輯欄位。"
+    : "點選符號插入目前改良注音編輯欄位。";
+}
+
+function keyboardNoFocusText() {
+  return state.displaySystem === "ipa"
+    ? "請先點選一個 IPA 編輯欄位。"
+    : "請先點選一個改良注音編輯欄位。";
+}
+
+function resetKeyboardHelp(isError = false, text = "") {
+  if (!el.keyboardHelp) {
+    return;
+  }
+  el.keyboardHelp.className = "";
+  el.keyboardHelp.textContent = text || keyboardHelpText();
+  if (isError) {
+    el.keyboardHelp.classList.add("status-error");
+  }
+}
+
+function sentences() {
+  return Array.isArray(state.payload?.sentences) ? state.payload.sentences : [];
+}
+
+function activeSentence() {
+  return sentences()[state.sentenceIndex] || null;
+}
+
+function clampSentenceIndex() {
+  const count = sentences().length;
+  if (count <= 0) {
+    state.sentenceIndex = 0;
+    return;
+  }
+  state.sentenceIndex = Math.max(0, Math.min(count - 1, state.sentenceIndex));
+}
+
+function escapeFilenamePart(value) {
+  return String(value || "text-ipa-zhuyin").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "text-ipa-zhuyin";
+}
+
+async function processText(sourceName = "inline") {
+  const text = el.textInput.value.trim();
+  if (!text) {
+    setStatus("請先輸入或匯入文字。", true);
+    return;
+  }
+  setStatus("處理中...");
+  try {
+    state.payload = await postJson("/api/process_text", { text, source: sourceName });
+    state.sentenceIndex = 0;
+    renderAll();
+    setStatus(`完成：${sentences().length} 句。`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function loadDisplayTable() {
+  if (browserPipeline) {
+    state.displayTable = browserPipeline.getDisplayTable() || {};
+    renderKeyboard();
+    return;
+  }
+  try {
+    const response = await fetch("/api/display_table", { method: "GET" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Request failed: ${response.status}`);
+    }
+    state.displayTable = payload?.display_table && typeof payload.display_table === "object"
+      ? payload.display_table
+      : {};
+  } catch (_error) {
+    state.displayTable = {};
+  }
+  renderKeyboard();
+}
+
+function renderAll() {
+  clampSentenceIndex();
+  renderSentenceSelect();
+  renderEditor();
+  renderKeyboard();
+  renderPresentation();
+}
+
+function keyboardEntries() {
+  const rows = Object.entries(state.displayTable || {})
+    .filter(([ipa]) => ipa)
+    .map(([ipa, row]) => {
+      const safeRow = row && typeof row === "object" ? row : {};
+      const label = state.displaySystem === "zhuyin_plus"
+        ? (safeRow.zhuyin_plus || safeRow.ipa || ipa)
+        : (safeRow.ipa || ipa);
+      const sortId = Number(safeRow.symbol_id || 0);
+      return {
+        ipa,
+        label: String(label || ipa),
+        insertToken: String(label || ipa),
+        sortId,
+      };
+    });
+  rows.sort((a, b) => {
+    if (a.sortId !== b.sortId) {
+      return a.sortId - b.sortId;
+    }
+    return a.ipa.localeCompare(b.ipa);
+  });
+  return rows;
+}
+
+function setActiveEditInput(input, meta) {
+  state.activeEditInput = input;
+  state.activeEditMeta = meta || null;
+  resetKeyboardHelp();
+}
+
+function restoreActiveEditInput() {
+  if (!state.activeEditMeta || !el.sentenceEditor) {
+    return;
+  }
+  const targetSelector = `input[data-edit-input='1'][data-sentence-idx='${state.activeEditMeta.sentenceIdx}'][data-word-idx='${state.activeEditMeta.wordIdx}'][data-system='${state.activeEditMeta.system}']`;
+  const target = el.sentenceEditor.querySelector(targetSelector);
+  if (target) {
+    state.activeEditInput = target;
+  }
+}
+
+function insertTokenToActiveEditInput(insertToken) {
+  const target = state.activeEditInput;
+  if (!target || !document.body.contains(target)) {
+    resetKeyboardHelp(true, keyboardNoFocusText());
+    return;
+  }
+
+  target.focus();
+  const currentValue = target.value || "";
+  const start = typeof target.selectionStart === "number" ? target.selectionStart : currentValue.length;
+  const end = typeof target.selectionEnd === "number" ? target.selectionEnd : currentValue.length;
+
+  const before = currentValue.slice(0, start);
+  const after = currentValue.slice(end);
+  const needsLeading = before.length > 0 && !/\s$/.test(before);
+  const needsTrailing = after.length > 0 && !/^\s/.test(after);
+  const insertText = `${needsLeading ? " " : ""}${insertToken}${needsTrailing ? " " : ""}`;
+
+  target.value = `${before}${insertText}${after}`;
+  const cursor = before.length + insertText.length;
+  if (typeof target.setSelectionRange === "function") {
+    target.setSelectionRange(cursor, cursor);
+  }
+  target.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function renderKeyboard() {
+  if (!el.phonemeKeyboard) {
+    return;
+  }
+  el.phonemeKeyboard.innerHTML = "";
+  resetKeyboardHelp();
+  const entries = keyboardEntries();
+  entries.forEach((entry) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "key-chip";
+    btn.textContent = entry.label;
+    btn.title = `IPA: ${entry.ipa}`;
+    btn.addEventListener("click", () => insertTokenToActiveEditInput(entry.insertToken));
+    el.phonemeKeyboard.appendChild(btn);
+  });
+}
+
+function renderSentenceSelect() {
+  const items = sentences();
+  el.sentenceSelect.innerHTML = "";
+  if (items.length === 0) {
+    const option = document.createElement("option");
+    option.textContent = "尚無句子";
+    option.value = "0";
+    el.sentenceSelect.appendChild(option);
+    return;
+  }
+  items.forEach((sentence, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `${index + 1}. ${String(sentence.text || "").slice(0, 52)}`;
+    el.sentenceSelect.appendChild(option);
+  });
+  el.sentenceSelect.value = String(state.sentenceIndex);
+}
+
+function renderEditor() {
+  const items = sentences();
+  el.sentenceEditor.innerHTML = "";
+  if (items.length === 0) {
+    state.activeEditInput = null;
+    state.activeEditMeta = null;
+    el.sentenceEditor.className = "sentence-editor empty-state";
+    el.sentenceEditor.textContent = "請先匯入或貼上文字。";
+    return;
+  }
+
+  el.sentenceEditor.className = "sentence-editor";
+  items.forEach((sentence, sentenceIdx) => {
+    el.sentenceEditor.appendChild(buildSentenceCard(sentence, sentenceIdx));
+  });
+  restoreActiveEditInput();
+}
+
+function buildSentenceCard(sentence, sentenceIdx) {
+  const card = document.createElement("article");
+  card.className = `sentence-card${sentenceIdx === state.sentenceIndex ? " active" : ""}`;
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = `句子 ${sentenceIdx + 1}`;
+  const jumpBtn = document.createElement("button");
+  jumpBtn.type = "button";
+  jumpBtn.textContent = "選取此句";
+  jumpBtn.addEventListener("click", () => {
+    state.sentenceIndex = sentenceIdx;
+    renderAll();
+  });
+  header.append(title, jumpBtn);
+  card.appendChild(header);
+
+  const sentenceText = document.createElement("textarea");
+  sentenceText.className = "sentence-text-input";
+  sentenceText.value = sentence.text || "";
+  sentenceText.addEventListener("change", async () => {
+    await reprocessSentence(sentenceIdx, sentenceText.value);
+  });
+  card.appendChild(sentenceText);
+
+  const wordList = document.createElement("div");
+  wordList.className = "word-list";
+  (Array.isArray(sentence.words) ? sentence.words : []).forEach((word, wordIdx) => {
+    wordList.appendChild(buildWordRow(sentenceIdx, wordIdx, word));
+  });
+  card.appendChild(wordList);
+  return card;
+}
+
+function buildWordRow(sentenceIdx, wordIdx, word) {
+  const row = document.createElement("div");
+  row.className = "word-row";
+
+  const wordCell = document.createElement("div");
+  const wordLabel = document.createElement("p");
+  wordLabel.className = "field-label";
+  wordLabel.textContent = "Word";
+  const wordInput = document.createElement("input");
+  wordInput.type = "text";
+  wordInput.value = word.word || "";
+  wordInput.addEventListener("change", async () => {
+    await reprocessWord(sentenceIdx, wordIdx, wordInput.value);
+  });
+  const source = document.createElement("span");
+  source.className = "source-tag";
+  source.textContent = word.g2p_source || "manual";
+  wordCell.append(wordLabel, wordInput, source);
+
+  const ipaCell = document.createElement("div");
+  const editLabel = document.createElement("p");
+  editLabel.className = "field-label";
+  editLabel.textContent = state.displaySystem === "ipa" ? "IPA tokens" : "改良注音 tokens";
+  const editInput = document.createElement("input");
+  editInput.type = "text";
+  editInput.className = "ipa-input editable-token-input";
+  editInput.dataset.editInput = "1";
+  editInput.dataset.sentenceIdx = String(sentenceIdx);
+  editInput.dataset.wordIdx = String(wordIdx);
+  editInput.dataset.system = state.displaySystem;
+  editInput.value = editableTokens(word).join(" ");
+
+  const isActiveInput = state.activeEditMeta
+    && Number(state.activeEditMeta.sentenceIdx) === sentenceIdx
+    && Number(state.activeEditMeta.wordIdx) === wordIdx
+    && String(state.activeEditMeta.system || "") === state.displaySystem;
+  if (isActiveInput) {
+    editInput.classList.add("active");
+  }
+
+  editInput.addEventListener("focus", () => {
+    setActiveEditInput(editInput, { sentenceIdx, wordIdx, system: state.displaySystem });
+    editInput.classList.add("active");
+  });
+  editInput.addEventListener("click", () => {
+    setActiveEditInput(editInput, { sentenceIdx, wordIdx, system: state.displaySystem });
+    editInput.classList.add("active");
+  });
+  editInput.addEventListener("blur", () => {
+    editInput.classList.remove("active");
+  });
+  editInput.addEventListener("change", async () => {
+    if (state.displaySystem === "ipa") {
+      await updateWordIpa(sentenceIdx, wordIdx, editInput.value);
+      return;
+    }
+    await updateWordDisplayTokens(sentenceIdx, wordIdx, editInput.value, "zhuyin_plus");
+  });
+  ipaCell.append(editLabel, editInput);
+
+  const displayCell = document.createElement("div");
+  const displayLabel = document.createElement("p");
+  displayLabel.className = "field-label";
+  displayLabel.textContent = state.displaySystem === "ipa" ? "改良注音預覽" : "IPA 參考";
+  const preview = document.createElement("div");
+  preview.className = "display-preview";
+  const previewSystem = state.displaySystem === "ipa" ? "zhuyin_plus" : "ipa";
+  preview.textContent = displayTokensForSystem(word, previewSystem).join(" ") || "-";
+  displayCell.append(displayLabel, preview);
+
+  row.append(wordCell, ipaCell, displayCell);
+  return row;
+}
+
+function displayTokensRawForSystem(word, system) {
+  const display = word?.display && typeof word.display === "object" ? word.display : {};
+  const candidate = display[system];
+  if (Array.isArray(candidate)) {
+    return candidate.map((token) => String(token || ""));
+  }
+  if (system === "ipa") {
+    return Array.isArray(word?.ipa) ? word.ipa.map((token) => String(token || "")) : [];
+  }
+  return [];
+}
+
+function displayTokensRaw(word) {
+  return displayTokensRawForSystem(word, state.displaySystem);
+}
+
+function displayTokensForSystem(word, system) {
+  return displayTokensRawForSystem(word, system).map((token) => token.trim()).filter((token) => token);
+}
+
+function displayTokens(word) {
+  return displayTokensForSystem(word, state.displaySystem);
+}
+
+function editableTokens(word) {
+  if (state.displaySystem === "ipa") {
+    return displayTokensForSystem(word, "ipa");
+  }
+  return displayTokensForSystem(word, "zhuyin_plus");
+}
+
+function normalizeEditableTokens(text) {
+  const raw = String(text || "").trim();
+  if (!raw) {
+    return [];
+  }
+  return raw.split(/\s+/).filter((token) => token);
+}
+
+async function reprocessSentence(sentenceIdx, text) {
+  const sentence = sentences()[sentenceIdx];
+  if (!sentence) {
+    return;
+  }
+  setStatus(`重算句子 ${sentenceIdx + 1}...`);
+  try {
+    const result = await postJson("/api/reprocess_sentence", {
+      sentence_id: sentence.sentence_id || String(sentenceIdx + 1),
+      text,
+    });
+    state.payload.sentences[sentenceIdx] = result.sentence;
+    state.sentenceIndex = sentenceIdx;
+    renderAll();
+    setStatus(`句子 ${sentenceIdx + 1} 已重算。`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function reprocessWord(sentenceIdx, wordIdx, wordText) {
+  const sentence = sentences()[sentenceIdx];
+  if (!sentence) {
+    return;
+  }
+  const contextTokens = (sentence.words || []).map((word, idx) => (idx === wordIdx ? wordText : word.word));
+  setStatus(`重算單字 ${wordText}...`);
+  try {
+    const result = await postJson("/api/reprocess_word", {
+      word: wordText,
+      context: { tokens: contextTokens, index: wordIdx },
+    });
+    const nextWord = { ...result.word, word_id: String(wordIdx + 1), edited: true };
+    state.payload.sentences[sentenceIdx].words[wordIdx] = nextWord;
+    state.sentenceIndex = sentenceIdx;
+    renderAll();
+    setStatus(`單字 ${wordText} 已重算。`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function updateWordIpa(sentenceIdx, wordIdx, ipaText) {
+  const sentence = sentences()[sentenceIdx];
+  const word = sentence?.words?.[wordIdx];
+  if (!word) {
+    return;
+  }
+  setStatus(`轉換 ${word.word || "word"} 的顯示...`);
+  try {
+    const tokens = ipaText.trim() ? ipaText.trim().split(/\s+/) : [];
+    const result = await postJson("/api/display_for_ipa", { ipa: tokens, word: word.word });
+    state.payload.sentences[sentenceIdx].words[wordIdx] = {
+      ...word,
+      ipa: result.ipa,
+      display: result.display,
+      token_details: result.token_details,
+      g2p_source: "manual_ipa",
+      edited: true,
+      display_edited: false,
+    };
+    state.sentenceIndex = sentenceIdx;
+    renderAll();
+    setStatus(`${word.word || "word"} 已更新 IPA 顯示。`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function normalizeOverrideLength(tokens, targetLen) {
+  const normalized = Array.isArray(tokens) ? tokens.map((token) => String(token || "")) : [];
+  if (!Number.isFinite(targetLen) || targetLen <= 0) {
+    return normalized;
+  }
+  if (normalized.length < targetLen) {
+    normalized.push(...new Array(targetLen - normalized.length).fill(""));
+  }
+  if (normalized.length > targetLen) {
+    return normalized.slice(0, targetLen);
+  }
+  return normalized;
+}
+
+async function updateWordDisplayTokens(sentenceIdx, wordIdx, displayText, system) {
+  const sentence = sentences()[sentenceIdx];
+  const word = sentence?.words?.[wordIdx];
+  if (!word) {
+    return;
+  }
+
+  const editable = normalizeEditableTokens(displayText);
+  const baseLen = Array.isArray(word.ipa) ? word.ipa.length : 0;
+  const normalized = normalizeOverrideLength(editable, baseLen);
+  const nextDisplay = {
+    ...(word.display && typeof word.display === "object" ? word.display : {}),
+    [system]: normalized,
+  };
+
+  state.payload.sentences[sentenceIdx].words[wordIdx] = {
+    ...word,
+    display: nextDisplay,
+    edited: true,
+    display_edited: true,
+  };
+  state.sentenceIndex = sentenceIdx;
+  renderAll();
+  setStatus(`${word.word || "word"} 已更新${DISPLAY_LABEL[system] || system}。`);
+}
+
+function setDisplaySystem(system) {
+  state.displaySystem = system === "zhuyin_plus" ? "zhuyin_plus" : "ipa";
+  el.displaySystemSelect.value = state.displaySystem;
+  el.presentationDisplaySystemSelect.value = state.displaySystem;
+  state.activeEditInput = null;
+  state.activeEditMeta = null;
+  if (el.keyboardLabel) {
+    el.keyboardLabel.textContent = state.displaySystem === "ipa" ? "音標小鍵盤" : "注音小鍵盤";
+  }
+  renderEditor();
+  renderKeyboard();
+  renderPresentation();
+}
+
+function jumpToSentence(delta) {
+  const count = sentences().length;
+  if (count <= 0) {
+    return;
+  }
+  state.sentenceIndex = Math.max(0, Math.min(count - 1, state.sentenceIndex + delta));
+  renderAll();
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode === "presentation" ? "presentation" : "edit";
+  document.body.classList.toggle("presentation-mode", state.viewMode === "presentation");
+  document.body.classList.toggle("edit-mode", state.viewMode !== "presentation");
+  el.presentationSection.hidden = state.viewMode !== "presentation";
+  el.editSection.hidden = state.viewMode === "presentation";
+  renderPresentation();
+}
+
+function getPresentationTokensAndDetails(word) {
+  const rawTokens = displayTokensRaw(word);
+  const tokenDetails = Array.isArray(word?.token_details) ? word.token_details : [];
+  if (rawTokens.length > 0 && rawTokens.length === tokenDetails.length) {
+    return {
+      tokens: rawTokens,
+      tokenDetails,
+    };
+  }
+  return {
+    tokens: displayTokens(word),
+    tokenDetails: [],
+  };
+}
+
+function buildPresentationSyllableColumns(tokens, tokenDetails) {
+  const safeTokens = Array.isArray(tokens) ? tokens.map((token) => String(token || "")) : [];
+  const details = Array.isArray(tokenDetails) ? tokenDetails : [];
+  if (safeTokens.length === 0 || safeTokens.length !== details.length) {
+    return null;
+  }
+
+  const bySyllable = new Map();
+  let invalidFound = false;
+  let visibleAssignedCount = 0;
+
+  safeTokens.forEach((token, idx) => {
+    const detail = details[idx] && typeof details[idx] === "object" ? details[idx] : {};
+    const slot = String(detail.syllable_slot || "");
+    const rawSyllable = Number(detail.syllable_index);
+    if (!PRESENTATION_SLOT_ORDER.includes(slot) || !Number.isFinite(rawSyllable)) {
+      invalidFound = true;
+      return;
+    }
+
+    const syllableIndex = Math.max(0, Math.trunc(rawSyllable));
+    if (!bySyllable.has(syllableIndex)) {
+      bySyllable.set(syllableIndex, { C1: [], V: [], C2: [] });
+    }
+
+    const shown = token.trim();
+    if (!shown) {
+      return;
+    }
+
+    bySyllable.get(syllableIndex)[slot].push(shown);
+    visibleAssignedCount += 1;
+  });
+
+  if (invalidFound || visibleAssignedCount <= 0 || bySyllable.size === 0) {
+    return null;
+  }
+
+  const indices = Array.from(bySyllable.keys()).sort((a, b) => a - b);
+  return indices.map((index) => ({
+    index,
+    slots: bySyllable.get(index),
+  }));
+}
+
+function buildPresentationFallbackColumns(tokens) {
+  const safeTokens = Array.isArray(tokens)
+    ? tokens.map((token) => String(token || "").trim()).filter((token) => token)
+    : [];
+  return safeTokens.map((token) => ({
+    slots: {
+      C1: [],
+      V: [token],
+      C2: [],
+    },
+  }));
+}
+
+function normalizePresentationColumnSlots(column) {
+  const safeColumn = column && typeof column === "object" ? column : {};
+  const slots = {};
+  PRESENTATION_SLOT_ORDER.forEach((slot) => {
+    const raw = Array.isArray(safeColumn?.slots?.[slot]) ? safeColumn.slots[slot] : [];
+    slots[slot] = raw.map((token) => String(token || "").trim()).filter((token) => token);
+  });
+  return { slots };
+}
+
+function buildPresentationWordLayout(word) {
+  const wordText = String(word?.word || "").trim();
+  const { tokens, tokenDetails } = getPresentationTokensAndDetails(word);
+  const bySyllable = buildPresentationSyllableColumns(tokens, tokenDetails);
+  const rawColumns = Array.isArray(bySyllable) && bySyllable.length > 0
+    ? bySyllable
+    : buildPresentationFallbackColumns(tokens);
+
+  if (!Array.isArray(rawColumns) || rawColumns.length === 0) {
+    return {
+      wordText,
+      columns: [],
+      tokenCount: 0,
+    };
+  }
+
+  const columns = rawColumns.map((column) => normalizePresentationColumnSlots(column));
+  const tokenCount = columns.reduce((count, column) => {
+    return count + PRESENTATION_SLOT_ORDER.reduce((inner, slot) => inner + (column.slots[slot] || []).length, 0);
+  }, 0);
+
+  return {
+    wordText,
+    columns,
+    tokenCount,
+  };
+}
+
+function estimatePresentationTokenTextWidth(tokenText, scale = 1) {
+  const text = String(tokenText || "").trim();
+  const safeScale = Number.isFinite(scale) ? Math.max(0.62, Math.min(1, scale)) : 1;
+  if (!text) {
+    return Math.max(12, Math.round(16 * safeScale));
+  }
+
+  let units = 0;
+  for (const ch of text) {
+    if (/\s/.test(ch)) {
+      units += 0.42;
+    } else if (/[\u3040-\u30ff\u4e00-\u9fff\u3100-\u312f]/.test(ch)) {
+      units += 1.02;
+    } else if (/[()\[\]{}]/.test(ch)) {
+      units += 0.46;
+    } else if (/[0-9]/.test(ch)) {
+      units += 0.58;
+    } else {
+      units += 0.64;
+    }
+  }
+
+  const unitWidth = Math.max(8, Math.round(24 * safeScale));
+  return Math.max(Math.round(18 * safeScale), Math.round(units * unitWidth));
+}
+
+function estimatePresentationWordTextWidth(wordText, scale = 1) {
+  const text = String(wordText || "").trim();
+  const safeScale = Number.isFinite(scale) ? Math.max(0.62, Math.min(1, scale)) : 1;
+  if (!text) {
+    return Math.max(64, Math.round(72 * safeScale));
+  }
+
+  let unitCount = 0;
+  for (const ch of text) {
+    if (/\s/.test(ch)) {
+      unitCount += 0.34;
+    } else if (/[MWmw]/.test(ch)) {
+      unitCount += 0.95;
+    } else if (/[A-Z]/.test(ch)) {
+      unitCount += 0.78;
+    } else if (/[a-z]/.test(ch)) {
+      unitCount += 0.66;
+    } else if (/[0-9]/.test(ch)) {
+      unitCount += 0.62;
+    } else {
+      unitCount += 1.02;
+    }
+  }
+
+  const unitWidth = Math.max(12, Math.round(30 * safeScale));
+  const estimated = Math.round(unitCount * unitWidth);
+  return Math.max(Math.round(72 * safeScale), estimated);
+}
+
+function estimatePresentationColumnWidth(column, scale = 1) {
+  const safeColumn = column && typeof column === "object" ? column : {};
+  const slotTexts = PRESENTATION_SLOT_ORDER.map((slot) => {
+    const tokens = Array.isArray(safeColumn?.slots?.[slot]) ? safeColumn.slots[slot] : [];
+    if (tokens.length === 0) {
+      return "-";
+    }
+    return tokens.map((token) => String(token || "")).join(" ");
+  });
+  const widest = slotTexts.reduce((maxWidth, text) => {
+    return Math.max(maxWidth, estimatePresentationTokenTextWidth(text, scale));
+  }, 0);
+  return Math.max(52, widest + Math.round(16 * scale));
+}
+
+function splitPresentationWordLayouts(wordLayouts, maxColumnsPerLine = 14) {
+  const lines = [];
+  let current = [];
+  let currentColumns = 0;
+
+  wordLayouts.forEach((layout) => {
+    const cols = Array.isArray(layout?.columns) ? layout.columns.length : 0;
+    if (cols <= 0) {
+      return;
+    }
+    if (current.length > 0 && currentColumns + cols > maxColumnsPerLine) {
+      lines.push(current);
+      current = [];
+      currentColumns = 0;
+    }
+    current.push(layout);
+    currentColumns += cols;
+  });
+
+  if (current.length > 0) {
+    lines.push(current);
+  }
+
+  return lines;
+}
+
+function buildPresentationWordGroup(layout, scale = 1) {
+  const columns = Array.isArray(layout?.columns) ? layout.columns : [];
+  if (columns.length === 0) {
+    return null;
+  }
+
+  const columnWidths = columns.map((column) => estimatePresentationColumnWidth(column, scale));
+  const wordTextWidth = estimatePresentationWordTextWidth(layout.wordText, scale);
+  const contentWidth = Math.max(
+    wordTextWidth,
+    columnWidths.reduce((sum, width) => sum + width, 0) + (Math.max(0, columns.length - 1) * Math.max(8, Math.round(14 * scale))),
+  );
+  const columnTemplate = columnWidths.map((width) => `minmax(${Math.max(24, Math.round(width))}px, 1fr)`).join(" ");
+
+  const group = document.createElement("div");
+  group.className = "presentation-word-group";
+  group.style.setProperty("--presentation-word-syllables", String(Math.max(1, columns.length)));
+  group.style.setProperty("--presentation-word-gap", `${Math.max(8, Math.round(14 * scale))}px`);
+  group.style.setProperty("--presentation-word-min-width", `${Math.max(72, Math.round(contentWidth))}px`);
+  group.style.setProperty("--presentation-word-columns-template", columnTemplate || "minmax(72px, 1fr)");
+
+  const wordCell = document.createElement("span");
+  wordCell.className = "presentation-word-cell presentation-word-span";
+  wordCell.textContent = layout.wordText || "...";
+  group.appendChild(wordCell);
+
+  PRESENTATION_SLOT_ORDER.forEach((slot) => {
+    const slotRow = document.createElement("div");
+    slotRow.className = "presentation-word-slot-row";
+    const slotCells = document.createElement("div");
+    slotCells.className = "presentation-word-slot-cells";
+
+    columns.forEach((column) => {
+      const cell = document.createElement("span");
+      cell.className = "presentation-slot-cell";
+      const slotTokens = Array.isArray(column?.slots?.[slot]) ? column.slots[slot] : [];
+      if (slotTokens.length === 0) {
+        cell.classList.add("empty");
+        cell.textContent = "-";
+      } else {
+        cell.textContent = slotTokens.join(" ");
+      }
+      slotCells.appendChild(cell);
+    });
+
+    slotRow.appendChild(slotCells);
+    group.appendChild(slotRow);
+  });
+
+  return group;
+}
+
+function buildPresentationSentenceMatrix(wordLayouts, scale = 1) {
+  const lines = splitPresentationWordLayouts(wordLayouts);
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return {
+      matrix: null,
+      columnCount: 0,
+      lineCount: 0,
+    };
+  }
+
+  const matrix = document.createElement("div");
+  matrix.className = "presentation-sentence-matrix";
+  let maxLineColumns = 0;
+
+  lines.forEach((lineLayouts, lineIdx) => {
+    const lineNode = document.createElement("div");
+    lineNode.className = "presentation-line-matrix";
+    lineNode.setAttribute("data-line-index", String(lineIdx + 1));
+
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "presentation-line-groups";
+    let lineColumns = 0;
+
+    lineLayouts.forEach((layout) => {
+      lineColumns += Array.isArray(layout?.columns) ? layout.columns.length : 0;
+      const groupNode = buildPresentationWordGroup(layout, scale);
+      if (groupNode) {
+        groupsWrap.appendChild(groupNode);
+      }
+    });
+
+    maxLineColumns = Math.max(maxLineColumns, lineColumns);
+    lineNode.appendChild(groupsWrap);
+    matrix.appendChild(lineNode);
+  });
+
+  return {
+    matrix,
+    columnCount: maxLineColumns,
+    lineCount: lines.length,
+  };
+}
+
+function updatePresentationScrollState() {
+  const row = el.presentationPhonemeLine?.querySelector(".presentation-phoneme-row");
+  if (!row) {
+    el.presentationPhonemeLine?.classList.remove("scrollable");
+    return;
+  }
+  const hasOverflow = row.scrollWidth > (row.clientWidth + 2);
+  el.presentationPhonemeLine.classList.toggle("scrollable", hasOverflow);
+}
+
+function renderPresentation() {
+  const sentence = activeSentence();
+  if (!sentence || !Array.isArray(sentence.words) || sentence.words.length === 0) {
+    el.presentationSentenceText.hidden = false;
+    el.presentationSentenceText.textContent = "請先匯入文字";
+    el.presentationPhonemeLine.textContent = "";
+    el.presentationPhonemeLine.classList.remove("scrollable");
+    return;
+  }
+
+  el.presentationSentenceText.hidden = false;
+  el.presentationSentenceText.textContent = sentence.text || "";
+  el.presentationPhonemeLine.innerHTML = "";
+
+  const label = document.createElement("div");
+  label.className = "presentation-phoneme-label";
+  label.textContent = DISPLAY_LABEL[state.displaySystem] || state.displaySystem;
+  el.presentationPhonemeLine.appendChild(label);
+
+  const row = document.createElement("div");
+  row.className = "presentation-phoneme-row";
+  const words = Array.isArray(sentence.words) ? sentence.words : [];
+  const wordLayouts = words.map((word) => buildPresentationWordLayout(word)).filter((layout) => layout.columns.length > 0);
+  const totalTokenCount = wordLayouts.reduce((sum, layout) => sum + Number(layout.tokenCount || 0), 0);
+  const totalColumnCount = wordLayouts.reduce((sum, layout) => sum + Number(layout.columns.length || 0), 0);
+
+  const scale = computePresentationScale(sentence.text || "", words.length, totalTokenCount, totalColumnCount);
+  el.presentationSection.style.setProperty("--presentation-scale", scale.toFixed(3));
+
+  const built = buildPresentationSentenceMatrix(wordLayouts, scale);
+  const matrix = built.matrix || document.createElement("div");
+  if (!built.matrix) {
+    matrix.className = "presentation-sentence-matrix";
+  }
+  row.appendChild(matrix);
+  el.presentationPhonemeLine.appendChild(row);
+  updatePresentationScrollState();
+}
+
+function computePresentationScale(sentenceText, wordCount, tokenCount, columnCount) {
+  const textLen = String(sentenceText || "").trim().length;
+  let scale = 1;
+  if (wordCount >= 8) scale -= 0.08;
+  if (wordCount >= 12) scale -= 0.08;
+  if (tokenCount >= 28) scale -= 0.08;
+  if (tokenCount >= 38) scale -= 0.08;
+  if (columnCount >= 14) scale -= 0.08;
+  if (columnCount >= 20) scale -= 0.08;
+  if (textLen >= 40) scale -= 0.06;
+  if (textLen >= 60) scale -= 0.08;
+  return Math.max(0.62, Math.min(1, scale));
+}
+
+async function exportJson() {
+  if (!state.payload) {
+    setStatus("尚無可匯出的資料。", true);
+    return;
+  }
+  setStatus("準備 JSON 匯出...");
+  try {
+    const result = await postJson("/api/export_json", { payload: state.payload });
+    const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const name = escapeFilenamePart(result?.source?.name || "text-ipa-zhuyin");
+    link.href = url;
+    link.download = `${name}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus("JSON 匯出已產生。schema 仍為 draft。");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function bindEvents() {
+  el.processBtn.addEventListener("click", () => processText("inline"));
+  el.txtInput.addEventListener("change", async () => {
+    const file = el.txtInput.files?.[0];
+    if (!file) {
+      return;
+    }
+    const text = await file.text();
+    el.textInput.value = text;
+    await processText(file.name);
+  });
+  el.displaySystemSelect.addEventListener("change", () => setDisplaySystem(el.displaySystemSelect.value));
+  el.presentationDisplaySystemSelect.addEventListener("change", () => setDisplaySystem(el.presentationDisplaySystemSelect.value));
+  el.sentenceSelect.addEventListener("change", () => {
+    state.sentenceIndex = Number(el.sentenceSelect.value) || 0;
+    renderAll();
+  });
+  el.prevSentenceBtn.addEventListener("click", () => jumpToSentence(-1));
+  el.nextSentenceBtn.addEventListener("click", () => jumpToSentence(1));
+  el.presentationPrevSentenceBtn.addEventListener("click", () => jumpToSentence(-1));
+  el.presentationNextSentenceBtn.addEventListener("click", () => jumpToSentence(1));
+  el.editModeBtn.addEventListener("click", () => setViewMode("edit"));
+  el.presentationModeBtn.addEventListener("click", () => setViewMode("presentation"));
+  el.presentationReturnBtn.addEventListener("click", () => setViewMode("edit"));
+  el.exportJsonBtn.addEventListener("click", exportJson);
+  document.addEventListener("keydown", (event) => {
+    if (state.viewMode !== "presentation") {
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) {
+      return;
+    }
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target?.tagName)) {
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      jumpToSentence(1);
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      jumpToSentence(-1);
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setViewMode("edit");
+    }
+  });
+}
+
+bindEvents();
+setDisplaySystem(state.displaySystem);
+loadDisplayTable();
+renderAll();
