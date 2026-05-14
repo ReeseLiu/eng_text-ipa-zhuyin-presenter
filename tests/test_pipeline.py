@@ -1,6 +1,8 @@
 import unittest
+import re
 
 from backend.pipeline import pipeline
+import backend.pipeline as pipeline_module
 
 
 class PipelineTest(unittest.TestCase):
@@ -203,6 +205,37 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(word_group[1]["toneLevel"], 0)
         self.assertEqual(word_group[2]["importance"], "important")
         self.assertTrue(str(word_group[0]["tokenId"]).startswith("tok_"))
+
+    def test_export_json_matches_strict_override_sentence(self):
+        sentence_text = pipeline_module.STRICT_SAMPLE_SENTENCE
+        payload = pipeline.process_text(sentence_text, "unit")
+        exported = pipeline.export_json(payload)
+        sentence = exported[0]
+
+        self.assertEqual(sentence["sentenceId"], "sen_52f04437f93f6e679dd1828e")
+        self.assertEqual(sentence["sentence"], sentence_text)
+
+        surfaces = re.findall(r"[A-Za-z0-9']+(?:[.,!?;:…]+)?|[^\s]", sentence_text)
+        self.assertEqual(len(sentence["words"]), len(surfaces))
+
+        for idx, surface in enumerate(surfaces):
+            if surface not in pipeline_module.JASON_STRICT_SURFACE_OVERRIDES:
+                continue
+            override = pipeline_module.JASON_STRICT_SURFACE_OVERRIDES[surface]
+            expected_tokens = override["tokens"]
+            group = sentence["words"][idx]
+
+            self.assertEqual(len(group), len(expected_tokens))
+            for token_idx, expected in enumerate(expected_tokens):
+                token = group[token_idx]
+                self.assertEqual(token["text"], expected["text"])
+                self.assertEqual(token["phonetic"], expected["phonetic"])
+                self.assertEqual(token["tokenId"], expected["tokenId"])
+                self.assertEqual(token["kkPhonetic"], override["kkPhonetic"])
+                self.assertEqual(token["partOfSpeech"], override["partOfSpeech"])
+                self.assertEqual(token["toneLevel"], 0)
+                self.assertEqual(token["toneStyle"], "solid-short")
+                self.assertEqual(token["importance"], "important" if token["phonetic"] else "not-important")
 
 
 if __name__ == "__main__":

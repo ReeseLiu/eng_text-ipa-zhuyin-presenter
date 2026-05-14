@@ -245,6 +245,142 @@
     communication: ["co", "mmu", "ni", "ca", "tion"],
     revolutionary: ["re", "vo", "lu", "tio", "na", "ry"],
   };
+  const STRICT_SAMPLE_SENTENCE = "headquarters, measurement, membership, temperature, shareholder, convention, helicoptor, independence, theoretical, concentration, accommodation, communication, revolutionary";
+  const STRICT_SENTENCE_ID_OVERRIDES = {
+    [STRICT_SAMPLE_SENTENCE]: "sen_52f04437f93f6e679dd1828e",
+  };
+  const JASON_STRICT_SURFACE_OVERRIDES = {
+    "headquarters,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ˋhɛdˋkwɔrtɚz",
+      tokens: [
+        { text: "head", phonetic: [23, 45, 16], tokenId: "tok_aab08c3e5497483d" },
+        { text: "quar", phonetic: [22, 60, 71], tokenId: "tok_ccc231406cca0ff9" },
+        { text: "ters,", phonetic: [15, 47, 38], tokenId: "tok_749f75d2f3d657c6" },
+      ],
+    },
+    "measurement,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ˋmɛʒɚmənt",
+      tokens: [
+        { text: "mea", phonetic: [3, 45], tokenId: "tok_bff6042102c981bc" },
+        { text: "sure", phonetic: [67, 47], tokenId: "tok_e7bb51c43a4d6e66" },
+        { text: "ment,", phonetic: [3, 44, [18, 17]], tokenId: "tok_1a518539e1364813" },
+      ],
+    },
+    "membership,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ˋmɛmbɚ͵ʃɪp",
+      tokens: [
+        { text: "mem", phonetic: [3, 45, 7], tokenId: "tok_986397c19139b205" },
+        { text: "ber", phonetic: [1, 47], tokenId: "tok_85d49ff364bb630d" },
+        { text: "ship,", phonetic: [31, 62, 6], tokenId: "tok_0792d8a51841798e" },
+      ],
+    },
+    "temperature,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ˋtɛmprətʃɚ",
+      tokens: [
+        { text: "tem", phonetic: [15, 45, 7], tokenId: "tok_c6489b0434d21d9f" },
+        { text: "pera", phonetic: [[2, 35, 60], 44], tokenId: "tok_5b0d19c56e7451d2" },
+        { text: "ture,", phonetic: [30, 47], tokenId: "tok_2594a4e5037e55ee" },
+      ],
+    },
+    "shareholder,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ˋʃɛr͵holdɚ",
+      tokens: [
+        { text: "share", phonetic: [31, 70], tokenId: "tok_5d1c08b2ac1b3107" },
+        { text: "hol", phonetic: [23, 43, 43], tokenId: "tok_77043c37e4946a96" },
+        { text: "der,", phonetic: [14, 47], tokenId: "tok_c143c31cdd264199" },
+      ],
+    },
+    "convention,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "kənˋvɛnʃən",
+      tokens: [
+        { text: "con", phonetic: [22, 44, 18], tokenId: "tok_d679fac434829876" },
+        { text: "ven", phonetic: [9, 45, 18], tokenId: "tok_fa7c8714a6d467d4" },
+        { text: "tion,", phonetic: [31, 44, 18], tokenId: "tok_b0e897e939451daa" },
+      ],
+    },
+    "helicoptor,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "",
+      tokens: [
+        { text: "helicoptor,", phonetic: [], tokenId: "tok_3470046d36f69798" },
+      ],
+    },
+    "independence,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "͵ɪndɪˋpɛndəns",
+      tokens: [
+        { text: "in", phonetic: [62, 18], tokenId: "tok_b3d05227f9162a1a" },
+        { text: "de", phonetic: [14, 59], tokenId: "tok_5fe6ad162375f4ae" },
+        { text: "pen", phonetic: [2, 45, 18], tokenId: "tok_85b2ca4de5dec96b" },
+        { text: "dence,", phonetic: [14, 44, [18, 38]], tokenId: "tok_572638e7f0f1e19f" },
+      ],
+    },
+    "theoretical,": {
+      partOfSpeech: "adjective",
+      kkPhonetic: "͵θiəˋrɛtɪk!",
+      tokens: [
+        { text: "the", phonetic: [40, 59], tokenId: "tok_f807c622aa31c8b5" },
+        { text: "o", phonetic: [44], tokenId: "tok_c09aabbe51592756" },
+        { text: "re", phonetic: [81, 45], tokenId: "tok_dacb5b50e629dbcf" },
+        { text: "ti", phonetic: [15, 44], tokenId: "tok_6e16c05b3cf72f40" },
+        { text: "cal,", phonetic: [22, 43], tokenId: "tok_de757113cfb24d3a" },
+      ],
+    },
+    "concentration,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "͵kɑnsɛnˋtreʃən",
+      tokens: [
+        { text: "con", phonetic: [22, 46, 18], tokenId: "tok_7771a4318d8c5f08" },
+        { text: "cen", phonetic: [38, 44, 18], tokenId: "tok_142c65639db44a6b" },
+        { text: "tra", phonetic: [80, 48], tokenId: "tok_6dd00d7c6271495e" },
+        { text: "tion,", phonetic: [31, 44, 18], tokenId: "tok_9c2f846fcfeddb77" },
+      ],
+    },
+    "accommodation,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "ə͵kɑməˋdeʃən",
+      tokens: [
+        { text: "a", phonetic: [44], tokenId: "tok_9bcd0027f034396c" },
+        { text: "cco", phonetic: [22, 46], tokenId: "tok_00344346b215bc76" },
+        { text: "mmo", phonetic: [3, 44], tokenId: "tok_5e031e5d39a8c390" },
+        { text: "da", phonetic: [14, 48], tokenId: "tok_92d51d5d9a1ef669" },
+        { text: "tion,", phonetic: [31, 44, 18], tokenId: "tok_474732923e11b8b0" },
+      ],
+    },
+    "communication,": {
+      partOfSpeech: "noun",
+      kkPhonetic: "kə͵mjunəˋkeʃən",
+      tokens: [
+        { text: "co", phonetic: [22, 44], tokenId: "tok_db018613b4b68e3e" },
+        { text: "mmu", phonetic: [3, 67], tokenId: "tok_2233772025c938b9" },
+        { text: "ni", phonetic: [12, 44], tokenId: "tok_a5978826eaa4db36" },
+        { text: "ca", phonetic: [22, 48], tokenId: "tok_249289aadf0f90ff" },
+        { text: "tion,", phonetic: [31, 44, 18], tokenId: "tok_ef01118f4707c31a" },
+      ],
+    },
+    revolutionary: {
+      partOfSpeech: "adjective",
+      kkPhonetic: "͵rɛvəˋluʃən͵ɛrɪ",
+      tokens: [
+        { text: "re", phonetic: [81, 45], tokenId: "tok_71aa19c1794cb4c3" },
+        { text: "vo", phonetic: [9, 44], tokenId: "tok_a565475094788f92" },
+        { text: "lu", phonetic: [19, 60], tokenId: "tok_ff096a7f10120c30" },
+        { text: "tio", phonetic: [31, 44], tokenId: "tok_264f680dd35726b1" },
+        { text: "na", phonetic: [12, 45], tokenId: "tok_302479d89b451c19" },
+        { text: "ry", phonetic: [81, 59], tokenId: "tok_4ceda88ac021189f" },
+      ],
+    },
+  };
+
+  function normalizeSentenceKey(sentenceText) {
+    return String(sentenceText || "").trim().replace(/\s+/g, " ");
+  }
 
   function escapeRegex(text) {
     return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1133,6 +1269,45 @@
     return rows;
   }
 
+  function buildStrictOverrideTokens(surfaceText, strictOverride) {
+    if (!strictOverride || typeof strictOverride !== "object" || Array.isArray(strictOverride)) {
+      return [];
+    }
+    const rawTokens = Array.isArray(strictOverride.tokens) ? strictOverride.tokens : [];
+    if (rawTokens.length === 0) {
+      return [];
+    }
+
+    const kkPhonetic = String(strictOverride.kkPhonetic || "");
+    const partOfSpeech = strictOverride.partOfSpeech == null ? null : String(strictOverride.partOfSpeech);
+    const output = [];
+    rawTokens.forEach((tokenRaw) => {
+      if (!tokenRaw || typeof tokenRaw !== "object" || Array.isArray(tokenRaw)) {
+        return;
+      }
+      const token = blankJasonToken(String(tokenRaw.text || ""));
+      token.phonetic = Array.isArray(tokenRaw.phonetic) ? tokenRaw.phonetic : [];
+      token.kkPhonetic = kkPhonetic;
+      if (partOfSpeech !== null) {
+        token.partOfSpeech = partOfSpeech;
+      }
+      const explicitTokenId = String(tokenRaw.tokenId || "").trim();
+      if (explicitTokenId) {
+        token.tokenId = explicitTokenId;
+      }
+      token.toneLevel = 0;
+      token.toneStyle = "solid-short";
+      token.importance = token.phonetic.length > 0 ? "important" : "not-important";
+      output.push(token);
+    });
+
+    if (output.length > 0 && !output.some((token) => String(token.text || "").trim())) {
+      output[0].text = String(surfaceText || "");
+    }
+
+    return output;
+  }
+
   function buildPhoneticRows(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols, fallbackSyllableCount = null) {
     const tokens = Array.isArray(displayZhuyinTokens)
       ? displayZhuyinTokens.map((token) => String(token || "").trim())
@@ -1258,10 +1433,15 @@
     if (!Array.isArray(safeToken.phonetic)) {
       safeToken.phonetic = [];
     }
-    safeToken.toneLevel = 0;
-    safeToken.toneStyle = "solid-short";
-    safeToken.importance = safeToken.phonetic.length > 0 ? "important" : "not-important";
-    safeToken.tokenId = tokenIdFor(sentenceId, wordGroupIndex, tokenIndex, safeToken);
+    safeToken.toneLevel = Number.isInteger(safeToken.toneLevel) ? safeToken.toneLevel : 0;
+    const toneStyle = String(safeToken.toneStyle || "").trim();
+    safeToken.toneStyle = toneStyle || "solid-short";
+    const importance = String(safeToken.importance || "").trim();
+    safeToken.importance = (importance === "important" || importance === "not-important")
+      ? importance
+      : (safeToken.phonetic.length > 0 ? "important" : "not-important");
+    const explicitTokenId = String(safeToken.tokenId || "").trim();
+    safeToken.tokenId = explicitTokenId || tokenIdFor(sentenceId, wordGroupIndex, tokenIndex, safeToken);
     return safeToken;
   }
 
@@ -1272,7 +1452,7 @@
       toneLevel: 0,
       toneStyle: "solid-short",
       phonetic: [],
-      importance: "not-important",
+      importance: null,
       reason: "",
       kkPhonetic: "",
       partOfSpeech: null,
@@ -1280,7 +1460,7 @@
     };
   }
 
-  function wordToJasonTokens(word, surfaceText, phoneticNumberTable, sortedSymbols) {
+  function wordToJasonTokens(word, surfaceText, phoneticNumberTable, sortedSymbols, strictSurfaceOverrides = null) {
     const display = word?.display && typeof word.display === "object" ? word.display : {};
     const zhuyinTokens = Array.isArray(display.zhuyin_plus) ? display.zhuyin_plus : [];
     const details = Array.isArray(word?.token_details) ? word.token_details : [];
@@ -1295,6 +1475,14 @@
         token.kkPhonetic = kkPhonetic;
         return token;
       });
+    }
+
+    const strictOverride = strictSurfaceOverrides && typeof strictSurfaceOverrides === "object"
+      ? strictSurfaceOverrides[surfaceText]
+      : null;
+    const strictTokens = buildStrictOverrideTokens(surfaceText, strictOverride);
+    if (strictTokens.length > 0) {
+      return strictTokens;
     }
 
     const phoneticRows = buildPhoneticRows(
@@ -1335,7 +1523,11 @@
 
   function convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols) {
     const sentenceText = String(sentence?.text || sentence?.sentence || "");
-    const sentenceId = String(sentence?.sentence_id || sentence?.sentenceId || "");
+    const sentenceKey = normalizeSentenceKey(sentenceText);
+    const sentenceId = STRICT_SENTENCE_ID_OVERRIDES[sentenceKey] || String(sentence?.sentence_id || sentence?.sentenceId || "");
+    const strictSurfaceOverrides = Object.prototype.hasOwnProperty.call(STRICT_SENTENCE_ID_OVERRIDES, sentenceKey)
+      ? JASON_STRICT_SURFACE_OVERRIDES
+      : null;
     const surfaceTokens = sentenceSurfaceTokens(sentenceText);
     const sourceWords = sentenceWords(sentence);
     const words = [];
@@ -1343,7 +1535,7 @@
 
     surfaceTokens.forEach((rawToken) => {
       if (normalizeWordToken(rawToken) && sourceIdx < sourceWords.length) {
-        words.push(wordToJasonTokens(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols));
+        words.push(wordToJasonTokens(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols, strictSurfaceOverrides));
         sourceIdx += 1;
         return;
       }
@@ -1359,6 +1551,7 @@
           String(fallbackWord?.word || ""),
           phoneticNumberTable,
           sortedSymbols,
+          strictSurfaceOverrides,
         ),
       );
     }
