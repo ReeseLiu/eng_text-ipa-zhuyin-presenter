@@ -40,32 +40,80 @@ const DISPLAY_LABEL = {
 };
 
 const PRESENTATION_SLOT_ORDER = ["C1", "V", "C2"];
-const browserPipeline = typeof window.createBrowserPipeline === "function"
-  ? window.createBrowserPipeline(window.BROWSER_DATA || {})
-  : null;
+let browserPipeline = null;
+let browserPipelineInitError = null;
+
+function canUseServerApi() {
+  return window.location.protocol !== "file:";
+}
+
+function offlinePipelineUnavailableMessage() {
+  const diagnostics = [];
+  if (typeof window.BROWSER_DATA === "undefined") {
+    diagnostics.push("browser_data.js 未載入");
+  }
+  if (typeof window.createBrowserPipeline !== "function") {
+    diagnostics.push("browser_pipeline.js 未載入");
+  }
+  if (browserPipelineInitError) {
+    diagnostics.push(`初始化失敗：${browserPipelineInitError.message}`);
+  }
+  if (diagnostics.length === 0) {
+    diagnostics.push("未知錯誤");
+  }
+  return `離線處理模組不可用（${diagnostics.join("；")}）。請確認已完整解壓縮後，再開啟 app/index.html。`;
+}
+
+function initBrowserPipeline() {
+  if (typeof window.createBrowserPipeline !== "function") {
+    return null;
+  }
+  try {
+    return window.createBrowserPipeline(window.BROWSER_DATA || {});
+  } catch (error) {
+    browserPipelineInitError = error instanceof Error ? error : new Error(String(error || "unknown error"));
+    console.error("Browser pipeline initialization failed:", browserPipelineInitError);
+    return null;
+  }
+}
+
+browserPipeline = initBrowserPipeline();
 
 async function postJson(url, body) {
   if (browserPipeline) {
-    if (url === "/api/process_text") {
-      return browserPipeline.processText(body?.text || "", body?.source || "inline");
+    try {
+      if (url === "/api/process_text") {
+        return browserPipeline.processText(body?.text || "", body?.source || "inline");
+      }
+      if (url === "/api/reprocess_sentence") {
+        return { sentence: browserPipeline.processSentence(body?.text || "", body?.sentence_id || "1") };
+      }
+      if (url === "/api/reprocess_word") {
+        return { word: browserPipeline.processWord(body?.word || "", body?.context || null) };
+      }
+      if (url === "/api/display_for_ipa") {
+        return browserPipeline.displayForIpa(
+          body?.ipa || [],
+          body?.word || "",
+          Array.isArray(body?.stress_levels) ? body.stress_levels : [],
+        );
+      }
+      if (url === "/api/export_json") {
+        return browserPipeline.exportJson(body?.payload && typeof body.payload === "object" ? body.payload : body || {});
+      }
+      throw new Error(`Unsupported route in browser mode: ${url}`);
+    } catch (error) {
+      browserPipelineInitError = error instanceof Error ? error : new Error(String(error || "unknown error"));
+      console.error("Browser pipeline runtime failed:", browserPipelineInitError);
+      if (!canUseServerApi()) {
+        throw new Error(`瀏覽器離線模式錯誤：${browserPipelineInitError.message}`);
+      }
+      browserPipeline = null;
     }
-    if (url === "/api/reprocess_sentence") {
-      return { sentence: browserPipeline.processSentence(body?.text || "", body?.sentence_id || "1") };
-    }
-    if (url === "/api/reprocess_word") {
-      return { word: browserPipeline.processWord(body?.word || "", body?.context || null) };
-    }
-    if (url === "/api/display_for_ipa") {
-      return browserPipeline.displayForIpa(
-        body?.ipa || [],
-        body?.word || "",
-        Array.isArray(body?.stress_levels) ? body.stress_levels : [],
-      );
-    }
-    if (url === "/api/export_json") {
-      return browserPipeline.exportJson(body?.payload && typeof body.payload === "object" ? body.payload : body || {});
-    }
-    throw new Error(`Unsupported route in browser mode: ${url}`);
+  }
+
+  if (!canUseServerApi()) {
+    throw new Error(offlinePipelineUnavailableMessage());
   }
 
   const response = await fetch(url, {
@@ -82,6 +130,9 @@ async function postJson(url, body) {
 }
 
 function setStatus(message, isError = false) {
+  if (!el.statusLine) {
+    return;
+  }
   el.statusLine.textContent = message;
   el.statusLine.style.color = isError ? "var(--danger)" : "var(--text-muted)";
 }
@@ -90,6 +141,14 @@ function keyboardHelpText() {
   return state.displaySystem === "ipa"
     ? "點選符號插入目前 IPA 編輯欄位。"
     : "點選符號插入目前改良注音編輯欄位。";
+}
+
+function bindElementEvent(target, eventName, handler) {
+  if (!target || typeof target.addEventListener !== "function") {
+    return false;
+  }
+  target.addEventListener(eventName, handler);
+  return true;
 }
 
 function keyboardNoFocusText() {
@@ -963,22 +1022,26 @@ async function exportJson() {
     const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const name = escapeFilenamePart(result?.source?.name || "text-ipa-zhuyin");
+    const name = escapeFilenamePart(state.payload?.source?.name || "text-ipa-zhuyin");
     link.href = url;
     link.download = `${name}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setStatus("JSON 匯出已產生。schema 仍為 draft。");
+    setStatus("JSON 匯出已產生（Jason 格式）。");
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
 function bindEvents() {
-  el.processBtn.addEventListener("click", () => processText("inline"));
-  el.txtInput.addEventListener("change", async () => {
+  const missingElements = [];
+  if (!bindElementEvent(el.processBtn, "click", () => processText("inline"))) {
+    missingElements.push("processBtn");
+  }
+
+  bindElementEvent(el.txtInput, "change", async () => {
     const file = el.txtInput.files?.[0];
     if (!file) {
       return;
@@ -987,20 +1050,32 @@ function bindEvents() {
     el.textInput.value = text;
     await processText(file.name);
   });
-  el.displaySystemSelect.addEventListener("change", () => setDisplaySystem(el.displaySystemSelect.value));
-  el.presentationDisplaySystemSelect.addEventListener("change", () => setDisplaySystem(el.presentationDisplaySystemSelect.value));
-  el.sentenceSelect.addEventListener("change", () => {
+
+  if (!bindElementEvent(el.displaySystemSelect, "change", () => setDisplaySystem(el.displaySystemSelect.value))) {
+    missingElements.push("displaySystemSelect");
+  }
+  if (!bindElementEvent(el.presentationDisplaySystemSelect, "change", () => setDisplaySystem(el.presentationDisplaySystemSelect.value))) {
+    missingElements.push("presentationDisplaySystemSelect");
+  }
+
+  bindElementEvent(el.sentenceSelect, "change", () => {
     state.sentenceIndex = Number(el.sentenceSelect.value) || 0;
     renderAll();
   });
-  el.prevSentenceBtn.addEventListener("click", () => jumpToSentence(-1));
-  el.nextSentenceBtn.addEventListener("click", () => jumpToSentence(1));
-  el.presentationPrevSentenceBtn.addEventListener("click", () => jumpToSentence(-1));
-  el.presentationNextSentenceBtn.addEventListener("click", () => jumpToSentence(1));
-  el.editModeBtn.addEventListener("click", () => setViewMode("edit"));
-  el.presentationModeBtn.addEventListener("click", () => setViewMode("presentation"));
-  el.presentationReturnBtn.addEventListener("click", () => setViewMode("edit"));
-  el.exportJsonBtn.addEventListener("click", exportJson);
+
+  bindElementEvent(el.prevSentenceBtn, "click", () => jumpToSentence(-1));
+  bindElementEvent(el.nextSentenceBtn, "click", () => jumpToSentence(1));
+  bindElementEvent(el.presentationPrevSentenceBtn, "click", () => jumpToSentence(-1));
+  bindElementEvent(el.presentationNextSentenceBtn, "click", () => jumpToSentence(1));
+  bindElementEvent(el.editModeBtn, "click", () => setViewMode("edit"));
+  bindElementEvent(el.presentationModeBtn, "click", () => setViewMode("presentation"));
+  bindElementEvent(el.presentationReturnBtn, "click", () => setViewMode("edit"));
+  bindElementEvent(el.exportJsonBtn, "click", exportJson);
+
+  if (missingElements.length > 0) {
+    console.error(`Missing required DOM elements: ${missingElements.join(", ")}`);
+  }
+
   document.addEventListener("keydown", (event) => {
     if (state.viewMode !== "presentation") {
       return;
@@ -1030,3 +1105,11 @@ bindEvents();
 setDisplaySystem(state.displaySystem);
 loadDisplayTable();
 renderAll();
+
+if (browserPipelineInitError && canUseServerApi()) {
+  setStatus(`瀏覽器離線模式載入失敗，已改用伺服器 API：${browserPipelineInitError.message}`, true);
+}
+
+if (!browserPipeline && !canUseServerApi()) {
+  setStatus(offlinePipelineUnavailableMessage(), true);
+}

@@ -16,6 +16,7 @@ cp -a "${ROOT_DIR}/docs" "${STAGE_DIR}/docs"
 cp -a "${ROOT_DIR}/samples" "${STAGE_DIR}/samples"
 cp -a "${ROOT_DIR}/tests" "${STAGE_DIR}/tests"
 cp "${ROOT_DIR}/README.md" "${STAGE_DIR}/README.md"
+cp "${ROOT_DIR}/index.html" "${STAGE_DIR}/index.html"
 
 tar -C "${OUT_DIR}" -czf "${OUT_DIR}/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
 printf '%s\n' "${OUT_DIR}/${PACKAGE_NAME}.tar.gz"

@@ -31,6 +31,43 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(table["p"]["ipa"], "p")
         self.assertTrue(table["p"]["zhuyin_plus"])
 
+    def test_export_json_returns_jason_shape(self):
+        payload = pipeline.process_text("I'm here.", "unit")
+        exported = pipeline.export_json(payload)
+        self.assertIsInstance(exported, list)
+        self.assertEqual(len(exported), 1)
+
+        sentence = exported[0]
+        self.assertIn("sentenceId", sentence)
+        self.assertIn("words", sentence)
+        self.assertEqual(sentence["sentence"], "I'm here.")
+
+        first_token = sentence["words"][0][0]
+        self.assertEqual(first_token["text"], "I'm")
+        self.assertEqual(first_token["phonetic"], [51, 7])
+        self.assertIsNone(first_token["toneLevel"])
+        self.assertEqual(first_token["reason"], "")
+
+    def test_export_json_wraps_multi_consonant_slots(self):
+        payload = pipeline.process_text("break chance.", "unit")
+        exported = pipeline.export_json(payload)
+        words = exported[0]["words"]
+
+        break_token = words[0][0]
+        self.assertEqual(break_token["text"], "break")
+        self.assertEqual(break_token["phonetic"], [[1, 81], 48, 25])
+
+        chance_token = words[1][0]
+        self.assertEqual(chance_token["text"], "chance.")
+        self.assertEqual(chance_token["phonetic"], [30, 49, [18, 38]])
+
+    def test_export_json_wraps_composite_slot_after_merge(self):
+        payload = pipeline.process_text("dream.", "unit")
+        exported = pipeline.export_json(payload)
+        token = exported[0]["words"][0][0]
+        self.assertEqual(token["text"], "dream.")
+        self.assertEqual(token["phonetic"], [[79], 66, 7])
+
 
 if __name__ == "__main__":
     unittest.main()

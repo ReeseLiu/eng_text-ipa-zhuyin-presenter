@@ -1,6 +1,7 @@
 /* eslint-disable no-continue */
 (() => {
   const SCHEMA_VERSION = "0.1.0";
+  const JASON_SLOT_ORDER = ["C1", "V", "C2"];
 
   const ARPABET_TO_IPA = {
     AA: "ɑ",
@@ -277,7 +278,7 @@
 
   class BrowserG2P {
     constructor(cmudictRaw) {
-      this.dict = {};
+      this.dict = Object.create(null);
       this.loadCmudict(cmudictRaw);
     }
 
@@ -774,7 +775,7 @@
   }
 
   function loadDisplayExceptionsJson(payload) {
-    const output = {};
+    const output = Object.create(null);
     const entries = Array.isArray(payload?.word_ipa_overrides) ? payload.word_ipa_overrides : [];
     entries.forEach((item) => {
       if (!item || typeof item !== "object") {
@@ -861,6 +862,229 @@
     };
   }
 
+  function normalizeSyllableSlot(value) {
+    const slot = String(value || "");
+    return JASON_SLOT_ORDER.includes(slot) ? slot : "V";
+  }
+
+  function normalizeSyllableIndex(value) {
+    if (Number.isInteger(value)) {
+      return Math.max(0, value);
+    }
+    if (typeof value === "string" && /^\d+$/.test(value)) {
+      return Math.max(0, Number(value));
+    }
+    return 0;
+  }
+
+  function parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols) {
+    const text = String(token || "").trim();
+    if (!text) {
+      return [];
+    }
+    const direct = Number(phoneticNumberTable[text]);
+    if (Number.isInteger(direct)) {
+      return [direct];
+    }
+
+    const memo = {};
+    const walk = (start) => {
+      if (start === text.length) {
+        return [];
+      }
+      if (Object.prototype.hasOwnProperty.call(memo, start)) {
+        return memo[start];
+      }
+
+      for (const symbol of sortedSymbols) {
+        if (!text.startsWith(symbol, start)) {
+          continue;
+        }
+        const tail = walk(start + symbol.length);
+        if (!Array.isArray(tail)) {
+          continue;
+        }
+        const number = Number(phoneticNumberTable[symbol]);
+        if (!Number.isInteger(number)) {
+          continue;
+        }
+        const result = [number, ...tail];
+        memo[start] = result;
+        return result;
+      }
+
+      memo[start] = null;
+      return null;
+    };
+
+    const segmented = walk(0);
+    return Array.isArray(segmented) ? segmented : [];
+  }
+
+  function buildPhoneticSlots(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols) {
+    const tokens = Array.isArray(displayZhuyinTokens)
+      ? displayZhuyinTokens.map((token) => String(token || "").trim())
+      : [];
+    if (tokens.length === 0) {
+      return [];
+    }
+
+    if (!Array.isArray(tokenDetails) || tokenDetails.length !== tokens.length) {
+      const fallback = [];
+      tokens.forEach((token) => {
+        const numbers = parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols);
+        if (numbers.length === 0) {
+          return;
+        }
+        fallback.push(numbers.length > 1 ? numbers : numbers[0]);
+      });
+      return fallback;
+    }
+
+    const syllableMap = new Map();
+    const slotCounts = new Map();
+    tokenDetails.forEach((detailRaw) => {
+      const detail = detailRaw && typeof detailRaw === "object" ? detailRaw : {};
+      const slot = normalizeSyllableSlot(detail.syllable_slot);
+      const syllableIndex = normalizeSyllableIndex(detail.syllable_index);
+      if (!slotCounts.has(syllableIndex)) {
+        slotCounts.set(syllableIndex, { C1: 0, V: 0, C2: 0 });
+      }
+      const counts = slotCounts.get(syllableIndex);
+      counts[slot] = Number(counts[slot] || 0) + 1;
+    });
+
+    tokens.forEach((token, idx) => {
+      if (!token) {
+        return;
+      }
+      const detail = tokenDetails[idx] && typeof tokenDetails[idx] === "object" ? tokenDetails[idx] : {};
+      const slot = normalizeSyllableSlot(detail.syllable_slot);
+      const syllableIndex = normalizeSyllableIndex(detail.syllable_index);
+      const numbers = parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols);
+      if (numbers.length === 0) {
+        return;
+      }
+
+      if (!syllableMap.has(syllableIndex)) {
+        syllableMap.set(syllableIndex, { C1: [], V: [], C2: [] });
+      }
+      const bucket = syllableMap.get(syllableIndex);
+      bucket[slot].push(...numbers);
+    });
+
+    const output = [];
+    const indices = Array.from(syllableMap.keys()).sort((a, b) => a - b);
+    indices.forEach((syllableIndex) => {
+      const bucket = syllableMap.get(syllableIndex);
+      JASON_SLOT_ORDER.forEach((slot) => {
+        const numbers = Array.isArray(bucket?.[slot]) ? bucket[slot] : [];
+        if (numbers.length === 0) {
+          return;
+        }
+        const compositeSlot = (slot === "C1" || slot === "C2")
+          && Number(slotCounts.get(syllableIndex)?.[slot] || 0) > 1;
+        output.push(numbers.length > 1 || compositeSlot ? numbers : numbers[0]);
+      });
+    });
+
+    return output;
+  }
+
+  function tokenKkPhonetic(word) {
+    const display = word?.display && typeof word.display === "object" ? word.display : {};
+    const kkTokens = Array.isArray(display.kk) ? display.kk : null;
+    if (kkTokens) {
+      return kkTokens.map((token) => String(token || "")).join("");
+    }
+    const ipaTokens = Array.isArray(word?.ipa) ? word.ipa : [];
+    return ipaTokens.map((token) => String(token || "")).join("");
+  }
+
+  function blankJasonToken(text) {
+    return {
+      tokenId: "",
+      text: String(text || ""),
+      toneLevel: null,
+      toneStyle: null,
+      phonetic: [],
+      importance: null,
+      reason: "",
+      kkPhonetic: "",
+      partOfSpeech: null,
+      transZh: "",
+    };
+  }
+
+  function wordToJasonToken(word, surfaceText, phoneticNumberTable, sortedSymbols) {
+    const token = blankJasonToken(surfaceText);
+    const display = word?.display && typeof word.display === "object" ? word.display : {};
+    const zhuyinTokens = Array.isArray(display.zhuyin_plus) ? display.zhuyin_plus : [];
+    const details = Array.isArray(word?.token_details) ? word.token_details : [];
+    token.phonetic = buildPhoneticSlots(zhuyinTokens, details, phoneticNumberTable, sortedSymbols);
+    token.kkPhonetic = tokenKkPhonetic(word);
+    return token;
+  }
+
+  function sentenceSurfaceTokens(sentenceText) {
+    const text = String(sentenceText || "").replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim();
+    if (!text) {
+      return [];
+    }
+    return text.match(/[A-Za-z0-9']+(?:[.,!?;:…]+)?|[^\s]/g) || [];
+  }
+
+  function sentenceWords(sentence) {
+    const rawWords = Array.isArray(sentence?.words) ? sentence.words : [];
+    return rawWords.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  }
+
+  function convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols) {
+    const sentenceText = String(sentence?.text || sentence?.sentence || "");
+    const surfaceTokens = sentenceSurfaceTokens(sentenceText);
+    const sourceWords = sentenceWords(sentence);
+    const words = [];
+    let sourceIdx = 0;
+
+    surfaceTokens.forEach((rawToken) => {
+      if (normalizeWordToken(rawToken) && sourceIdx < sourceWords.length) {
+        words.push([wordToJasonToken(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols)]);
+        sourceIdx += 1;
+        return;
+      }
+      words.push([blankJasonToken(rawToken)]);
+    });
+
+    while (sourceIdx < sourceWords.length) {
+      const fallbackWord = sourceWords[sourceIdx];
+      sourceIdx += 1;
+      words.push([
+        wordToJasonToken(
+          fallbackWord,
+          String(fallbackWord?.word || ""),
+          phoneticNumberTable,
+          sortedSymbols,
+        ),
+      ]);
+    }
+
+    return {
+      sentenceId: String(sentence?.sentence_id || sentence?.sentenceId || ""),
+      sentence: sentenceText,
+      words,
+      tags: Array.isArray(sentence?.tags) ? sentence.tags : [],
+      name: String(sentence?.name || ""),
+      notes: String(sentence?.notes || ""),
+    };
+  }
+
+  function exportPayloadToJason(payload, phoneticNumberTable, sortedSymbols) {
+    const sentences = Array.isArray(payload?.sentences) ? payload.sentences : [];
+    return sentences
+      .filter((sentence) => sentence && typeof sentence === "object")
+      .map((sentence) => convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols));
+  }
+
   function normalizeIpaTokens(value) {
     if (typeof value === "string") {
       const raw = value.trim();
@@ -891,6 +1115,23 @@
       this.displayTable = safeData.display_table && typeof safeData.display_table === "object"
         ? safeData.display_table
         : {};
+      const rawPhoneticNumberTable = safeData.phonetic_number_table && typeof safeData.phonetic_number_table === "object"
+        ? safeData.phonetic_number_table
+        : {};
+      this.phoneticNumberTable = {};
+      Object.entries(rawPhoneticNumberTable).forEach(([zhuyin, rawNumber]) => {
+        const number = Number(rawNumber);
+        if (!zhuyin || !Number.isInteger(number)) {
+          return;
+        }
+        this.phoneticNumberTable[zhuyin] = number;
+      });
+      this.phoneticNumberSymbols = Object.keys(this.phoneticNumberTable).sort((left, right) => {
+        if (left.length !== right.length) {
+          return right.length - left.length;
+        }
+        return left.localeCompare(right);
+      });
       this.displayExceptions = loadDisplayExceptionsJson(safeData.display_exceptions || {});
     }
 
@@ -971,16 +1212,7 @@
 
     exportJson(payload) {
       const output = payload && typeof payload === "object" ? payload : {};
-      if (!output.schema_version) {
-        output.schema_version = SCHEMA_VERSION;
-      }
-      if (!output.export) {
-        output.export = {
-          status: "draft",
-          format: "text-ipa-zhuyin-presenter",
-        };
-      }
-      return output;
+      return exportPayloadToJason(output, this.phoneticNumberTable, this.phoneticNumberSymbols);
     }
 
     getDisplayTable() {

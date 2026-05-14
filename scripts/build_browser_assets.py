@@ -34,13 +34,28 @@ def load_display_table(path: Path) -> dict[str, dict[str, str]]:
     return rows
 
 
+def load_phonetic_number_table(path: Path) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            zhuyin = (row.get("zhuyin_plus") or "").strip()
+            raw_number = (row.get("phonetic_Number") or "").strip()
+            if not zhuyin or not raw_number or not raw_number.isdigit():
+                continue
+            mapping[zhuyin] = int(raw_number)
+    return mapping
+
+
 def build_browser_data() -> dict:
     cmudict_raw = (DATA_DIR / "cmudict.dict").read_text(encoding="latin-1")
     display_table = load_display_table(DATA_DIR / "display_mapping_table_syllable.csv")
+    phonetic_number_table = load_phonetic_number_table(DATA_DIR / "display_mapping_table_phonetic_number.csv")
     display_exceptions = json.loads((DATA_DIR / "display_mapping_exceptions.json").read_text(encoding="utf-8"))
     return {
         "cmudict_raw": cmudict_raw,
         "display_table": display_table,
+        "phonetic_number_table": phonetic_number_table,
         "display_exceptions": display_exceptions,
     }
 
