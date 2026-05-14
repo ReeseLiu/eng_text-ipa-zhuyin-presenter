@@ -4,8 +4,8 @@
 
 ## 專案根目錄
 
-- Local: `/home/reeseliu/text-ipa-zhuyin-presenter`
-- NAS mirror: `/mnt/reesenas/text-ipa-zhuyin-presenter`
+- Local: `<local-project-root>/text-ipa-zhuyin-presenter`
+- NAS mirror: `<nas-project-root>/text-ipa-zhuyin-presenter`
 
 ## 目標（MVP）
 
@@ -34,8 +34,8 @@
 
 展示模式請盡量對齊現有專案視覺語言：
 
-- 參考：`/home/reeseliu/phoneme-surface-lattice/web/app.js`
-- 參考：`/home/reeseliu/phoneme-surface-lattice/web/styles.css`
+- 參考：`<reference-project-root>/phoneme-surface-lattice/web/app.js`
+- 參考：`<reference-project-root>/phoneme-surface-lattice/web/styles.css`
 
 至少保留這些設計方向：
 - 大字句子顯示
@@ -51,7 +51,7 @@
 - `configs/display_mapping_table_syllable.csv`
 - `configs/display_mapping_exceptions.json`
 
-來源專案：`/home/reeseliu/phoneme-surface-lattice`
+來源專案：`<reference-project-root>/phoneme-surface-lattice`
 
 ## 離線能力要求
 

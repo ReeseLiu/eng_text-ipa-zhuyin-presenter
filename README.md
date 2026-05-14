@@ -35,6 +35,7 @@ Notes:
 - Browser-only mode does not use `espeak-ng` fallback.
 - Unknown words (not found in CMUdict) can still be edited manually in IPA / Improved Zhuyin fields.
 - Unknown words in browser mode now include a guessed syllable count, and you can override it with the `音節數` control in edit mode to keep presentation/export grouping stable.
+- In static-only deployment mode (including GitHub Pages), the app does not call `/api/*`; all processing stays in browser runtime.
 
 ## Use
 
@@ -61,11 +62,32 @@ And browser bundle assets under `app/`:
 
 The backend reads bundled data first and does not download CMUdict at runtime. If a word is missing from CMUdict, it tries local `espeak-ng` as a fallback when installed; otherwise the word remains editable manually.
 
+## GitHub Pages Deployment
+
+This repo includes a GitHub Actions workflow (`.github/workflows/pages.yml`) for static-only deployment.
+
+What it does:
+- Rebuilds browser bundle data (`python scripts/build_browser_assets.py`)
+- Builds a minimal publish directory (`python scripts/build_pages_dist.py`)
+- Deploys only `dist-pages/` to GitHub Pages
+
+`dist-pages/` only includes:
+- `index.html`
+- `app/index.html`
+- `app/app.js`
+- `app/browser_pipeline.js`
+- `app/browser_data.js`
+- `app/styles.css`
+
+Security notes for Pages:
+- `app/index.html` includes a CSP to restrict resource loading.
+- When hosted on `*.github.io`, the app automatically runs in static-only mode and will not fallback to `/api/*`.
+
 Offline verification:
 - Disconnect network access.
 - Run `python -m backend.server`.
 - Open `http://127.0.0.1:8000` and process `samples/demo.txt`.
-- Confirm IPA and Improved Zhuyin are generated without referencing `/home/reeseliu/phoneme-surface-lattice`.
+- Confirm IPA and Improved Zhuyin are generated without referencing any external local project path.
 
 Planning docs:
 - `docs/execution_plan.md`

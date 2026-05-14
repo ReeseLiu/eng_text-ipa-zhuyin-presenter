@@ -40,11 +40,35 @@ const DISPLAY_LABEL = {
 };
 
 const PRESENTATION_SLOT_ORDER = ["C1", "V", "C2"];
+
+function resolveStaticOnlyMode() {
+  const meta = document.querySelector("meta[name='app-static-only']");
+  const raw = String(meta?.content || "").trim().toLowerCase();
+  if (["on", "true", "1"].includes(raw)) {
+    return true;
+  }
+  if (["off", "false", "0"].includes(raw)) {
+    return false;
+  }
+
+  if (window.location.protocol === "file:") {
+    return true;
+  }
+
+  const host = String(window.location.hostname || "").toLowerCase();
+  if (host.endsWith(".github.io")) {
+    return true;
+  }
+
+  return false;
+}
+
+const STATIC_ONLY_MODE = resolveStaticOnlyMode();
 let browserPipeline = null;
 let browserPipelineInitError = null;
 
 function canUseServerApi() {
-  return window.location.protocol !== "file:";
+  return !STATIC_ONLY_MODE;
 }
 
 function offlinePipelineUnavailableMessage() {
@@ -209,6 +233,11 @@ async function processText(sourceName = "inline") {
 async function loadDisplayTable() {
   if (browserPipeline) {
     state.displayTable = browserPipeline.getDisplayTable() || {};
+    renderKeyboard();
+    return;
+  }
+  if (!canUseServerApi()) {
+    state.displayTable = {};
     renderKeyboard();
     return;
   }

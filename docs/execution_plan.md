@@ -27,10 +27,10 @@ Out of scope (explicit):
 ## 2) Project Folders
 
 Local project root:
-- `/home/reeseliu/text-ipa-zhuyin-presenter`
+- `<local-project-root>/text-ipa-zhuyin-presenter`
 
 NAS mirror root:
-- `/mnt/reesenas/text-ipa-zhuyin-presenter`
+- `<nas-project-root>/text-ipa-zhuyin-presenter`
 
 Local structure:
 - `app/` static frontend (`index.html`, `app.js`, `styles.css`)
@@ -51,7 +51,7 @@ NAS structure:
 ## 3) Borrowed Logic and Sources
 
 Reference project:
-- `/home/reeseliu/phoneme-surface-lattice`
+- `<reference-project-root>/phoneme-surface-lattice`
 
 Primary logic to borrow/adapt:
 - `src/phoneme_surface_lattice/g2p.py`
