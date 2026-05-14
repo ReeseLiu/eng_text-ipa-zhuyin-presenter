@@ -397,7 +397,7 @@ def _token_id_for(sentence_id: str, word_group_index: int, token_index: int, tok
         "phonetic": token.get("phonetic") if isinstance(token.get("phonetic"), list) else [],
         "kkPhonetic": str(token.get("kkPhonetic") or ""),
     }
-    encoded = json.dumps(seed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    encoded = json.dumps(seed, ensure_ascii=False, separators=(",", ":"))
     digest = _stable_hash16(encoded)
     return f"tok_{digest}"
 

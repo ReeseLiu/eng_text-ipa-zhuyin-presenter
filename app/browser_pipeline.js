@@ -1248,7 +1248,7 @@
       phonetic: Array.isArray(safeToken.phonetic) ? safeToken.phonetic : [],
       kkPhonetic: String(safeToken.kkPhonetic || ""),
     };
-    const encoded = JSON.stringify(seed);
+    const encoded = JSON.stringify(seed, ["sentenceId", "wordGroupIndex", "tokenIndex", "text", "phonetic", "kkPhonetic"]);
     return `tok_${stableHash16(encoded)}`;
   }
 
