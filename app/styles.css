@@ -309,6 +309,46 @@ button.secondary {
   font-size: 0.78rem;
 }
 
+.word-meta-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.syllable-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 1px solid #d7e4ec;
+  background: #ffffff;
+}
+
+.syllable-control-label,
+.syllable-control-hint {
+  font-size: 0.74rem;
+  color: #607581;
+  white-space: nowrap;
+}
+
+.syllable-control-label {
+  font-weight: 700;
+}
+
+.syllable-count-input {
+  width: 64px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid #d3dfe7;
+  background: #ffffff;
+  color: #314650;
+}
+
 .phoneme-keyboard {
   display: flex;
   flex-wrap: wrap;

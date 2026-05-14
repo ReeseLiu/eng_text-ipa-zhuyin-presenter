@@ -877,6 +877,87 @@
     return 0;
   }
 
+  function normalizePositiveInt(value) {
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+      const parsed = Number(value.trim());
+      return parsed > 0 ? parsed : null;
+    }
+    return null;
+  }
+
+  function guessEnglishSyllableCount(wordText) {
+    let text = String(wordText || "").toLowerCase().replaceAll("’", "'");
+    text = text.replace(/(?:'s|s')$/g, "");
+    text = text.replace(/[^a-z]/g, "");
+    if (!text) {
+      return 1;
+    }
+    if (text.length <= 3) {
+      return 1;
+    }
+
+    let count = (text.match(/[aeiouy]+/g) || []).length;
+    if (/e$/.test(text) && !/[^aeiouy]le$/.test(text)) {
+      count -= 1;
+    }
+
+    return Math.max(1, count);
+  }
+
+  function groupTokensBySyllable(tokens, syllableCount) {
+    const compact = Array.isArray(tokens)
+      ? tokens.map((token) => String(token || "").trim()).filter((token) => token)
+      : [];
+    if (compact.length === 0) {
+      return [];
+    }
+    if (!Number.isInteger(syllableCount) || syllableCount <= 0) {
+      return compact.map((token) => [token]);
+    }
+
+    const target = Math.max(1, Math.min(syllableCount, compact.length));
+    const base = Math.floor(compact.length / target);
+    const remainder = compact.length % target;
+    const groups = [];
+    let cursor = 0;
+
+    for (let idx = 0; idx < target; idx += 1) {
+      const size = base + (idx < remainder ? 1 : 0);
+      if (size <= 0) {
+        continue;
+      }
+      groups.push(compact.slice(cursor, cursor + size));
+      cursor += size;
+    }
+
+    return groups;
+  }
+
+  function fallbackSyllableCountForWord(word, surfaceText = "") {
+    const manual = normalizePositiveInt(word?.manual_syllable_count);
+    if (manual !== null) {
+      return manual;
+    }
+
+    const guessed = normalizePositiveInt(word?.syllable_count_guess);
+    if (guessed !== null) {
+      return guessed;
+    }
+
+    const ipaTokens = Array.isArray(word?.ipa)
+      ? word.ipa.map((token) => String(token || "").trim()).filter((token) => token)
+      : [];
+    const source = String(word?.g2p_source || "");
+    if (source === "missing" || ipaTokens.length === 0) {
+      return guessEnglishSyllableCount(String(word?.word || surfaceText || ""));
+    }
+
+    return null;
+  }
+
   function parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols) {
     const text = String(token || "").trim();
     if (!text) {
@@ -921,7 +1002,7 @@
     return Array.isArray(segmented) ? segmented : [];
   }
 
-  function buildPhoneticSlots(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols) {
+  function buildPhoneticSlots(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols, fallbackSyllableCount = null) {
     const tokens = Array.isArray(displayZhuyinTokens)
       ? displayZhuyinTokens.map((token) => String(token || "").trim())
       : [];
@@ -931,12 +1012,20 @@
 
     if (!Array.isArray(tokenDetails) || tokenDetails.length !== tokens.length) {
       const fallback = [];
-      tokens.forEach((token) => {
-        const numbers = parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols);
-        if (numbers.length === 0) {
+      const grouped = groupTokensBySyllable(tokens, fallbackSyllableCount);
+      grouped.forEach((group) => {
+        const groupNumbers = [];
+        group.forEach((token) => {
+          const numbers = parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols);
+          if (numbers.length === 0) {
+            return;
+          }
+          groupNumbers.push(...numbers);
+        });
+        if (groupNumbers.length === 0) {
           return;
         }
-        fallback.push(numbers.length > 1 ? numbers : numbers[0]);
+        fallback.push(groupNumbers.length > 1 ? groupNumbers : groupNumbers[0]);
       });
       return fallback;
     }
@@ -1021,7 +1110,14 @@
     const display = word?.display && typeof word.display === "object" ? word.display : {};
     const zhuyinTokens = Array.isArray(display.zhuyin_plus) ? display.zhuyin_plus : [];
     const details = Array.isArray(word?.token_details) ? word.token_details : [];
-    token.phonetic = buildPhoneticSlots(zhuyinTokens, details, phoneticNumberTable, sortedSymbols);
+    const fallbackSyllableCount = fallbackSyllableCountForWord(word, surfaceText);
+    token.phonetic = buildPhoneticSlots(
+      zhuyinTokens,
+      details,
+      phoneticNumberTable,
+      sortedSymbols,
+      fallbackSyllableCount,
+    );
     token.kkPhonetic = tokenKkPhonetic(word);
     return token;
   }
@@ -1233,7 +1329,7 @@
         record.word || "",
         this.displayExceptions,
       );
-      return {
+      const word = {
         word_id: String(wordIndex),
         word: record.word || "",
         word_norm: record.word_norm || "",
@@ -1243,6 +1339,12 @@
         token_details: tokenDetails,
         edited: false,
       };
+
+      if (ipaTokens.length === 0 || String(record.g2p_source || "") === "missing") {
+        word.syllable_count_guess = guessEnglishSyllableCount(record.word || "");
+      }
+
+      return word;
     }
   }
 

@@ -68,6 +68,45 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(token["text"], "dream.")
         self.assertEqual(token["phonetic"], [[79], 66, 7])
 
+    def test_missing_word_record_has_syllable_guess(self):
+        word = pipeline._record_to_word(
+            {
+                "word": "blorptastic",
+                "word_norm": "blorptastic",
+                "canonical_ipa": [],
+                "canonical_stress_levels": [],
+                "g2p_source": "missing",
+            },
+            1,
+        )
+        self.assertEqual(word["g2p_source"], "missing")
+        self.assertIn("syllable_count_guess", word)
+        self.assertGreaterEqual(word["syllable_count_guess"], 1)
+
+    def test_export_json_uses_manual_syllable_count_when_details_missing(self):
+        payload = {
+            "sentences": [
+                {
+                    "sentence_id": "1",
+                    "text": "blorp",
+                    "words": [
+                        {
+                            "word": "blorp",
+                            "g2p_source": "missing",
+                            "ipa": [],
+                            "display": {"zhuyin_plus": ["ㄅ", "ㄌ", "ㄛ", "ㄆ"]},
+                            "token_details": [],
+                            "manual_syllable_count": 2,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        exported = pipeline.export_json(payload)
+        token = exported[0]["words"][0][0]
+        self.assertEqual(token["phonetic"], [[1, 13], [43, 2]])
+
 
 if __name__ == "__main__":
     unittest.main()

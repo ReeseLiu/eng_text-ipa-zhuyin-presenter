@@ -392,6 +392,48 @@ function buildSentenceCard(sentence, sentenceIdx) {
   return card;
 }
 
+function buildSyllableCountControl(sentenceIdx, wordIdx, word) {
+  const manualCount = normalizePositiveInt(word?.manual_syllable_count);
+  const fallbackCount = fallbackSyllableCountForWord(word);
+
+  const wrap = document.createElement("div");
+  wrap.className = "syllable-control";
+
+  const label = document.createElement("span");
+  label.className = "syllable-control-label";
+  label.textContent = "音節數";
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "syllable-count-input";
+  input.min = "1";
+  input.step = "1";
+  input.inputMode = "numeric";
+  if (manualCount !== null) {
+    input.value = String(manualCount);
+  }
+  if (fallbackCount !== null) {
+    input.placeholder = String(fallbackCount);
+  }
+  input.title = "留空可改回自動猜測音節數";
+  input.addEventListener("change", () => {
+    updateWordManualSyllableCount(sentenceIdx, wordIdx, input.value);
+  });
+
+  const hint = document.createElement("span");
+  hint.className = "syllable-control-hint";
+  if (manualCount !== null) {
+    hint.textContent = `手動：${manualCount}`;
+  } else if (fallbackCount !== null) {
+    hint.textContent = `自動猜測：${fallbackCount}`;
+  } else {
+    hint.textContent = "留空使用自動";
+  }
+
+  wrap.append(label, input, hint);
+  return wrap;
+}
+
 function buildWordRow(sentenceIdx, wordIdx, word) {
   const row = document.createElement("div");
   row.className = "word-row";
@@ -409,7 +451,15 @@ function buildWordRow(sentenceIdx, wordIdx, word) {
   const source = document.createElement("span");
   source.className = "source-tag";
   source.textContent = word.g2p_source || "manual";
-  wordCell.append(wordLabel, wordInput, source);
+
+  const metaRow = document.createElement("div");
+  metaRow.className = "word-meta-row";
+  metaRow.appendChild(source);
+  if (shouldShowSyllableControl(word)) {
+    metaRow.appendChild(buildSyllableCountControl(sentenceIdx, wordIdx, word));
+  }
+
+  wordCell.append(wordLabel, wordInput, metaRow);
 
   const ipaCell = document.createElement("div");
   const editLabel = document.createElement("p");
@@ -503,6 +553,136 @@ function normalizeEditableTokens(text) {
     return [];
   }
   return raw.split(/\s+/).filter((token) => token);
+}
+
+function normalizePositiveInt(value) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+function guessEnglishSyllableCount(wordText) {
+  let text = String(wordText || "").toLowerCase().replaceAll("’", "'");
+  text = text.replace(/(?:'s|s')$/g, "");
+  text = text.replace(/[^a-z]/g, "");
+  if (!text) {
+    return 1;
+  }
+  if (text.length <= 3) {
+    return 1;
+  }
+
+  let count = (text.match(/[aeiouy]+/g) || []).length;
+  if (/e$/.test(text) && !/[^aeiouy]le$/.test(text)) {
+    count -= 1;
+  }
+  return Math.max(1, count);
+}
+
+function fallbackSyllableCountForWord(word) {
+  const manual = normalizePositiveInt(word?.manual_syllable_count);
+  if (manual !== null) {
+    return manual;
+  }
+
+  const guessed = normalizePositiveInt(word?.syllable_count_guess);
+  if (guessed !== null) {
+    return guessed;
+  }
+
+  const ipaTokens = Array.isArray(word?.ipa)
+    ? word.ipa.map((token) => String(token || "").trim()).filter((token) => token)
+    : [];
+  const source = String(word?.g2p_source || "");
+  if (source === "missing" || ipaTokens.length === 0) {
+    return guessEnglishSyllableCount(String(word?.word || ""));
+  }
+
+  return null;
+}
+
+function hasUsableTokenDetails(word) {
+  const details = Array.isArray(word?.token_details) ? word.token_details : [];
+  const ipaTokens = Array.isArray(word?.ipa)
+    ? word.ipa.map((token) => String(token || "").trim()).filter((token) => token)
+    : [];
+  return details.length > 0 && details.length === ipaTokens.length;
+}
+
+function shouldShowSyllableControl(word) {
+  if (normalizePositiveInt(word?.manual_syllable_count) !== null) {
+    return true;
+  }
+  if (String(word?.g2p_source || "") === "missing") {
+    return true;
+  }
+  return !hasUsableTokenDetails(word);
+}
+
+function groupTokensBySyllable(tokens, syllableCount) {
+  const safeTokens = Array.isArray(tokens)
+    ? tokens.map((token) => String(token || "").trim()).filter((token) => token)
+    : [];
+  if (safeTokens.length === 0) {
+    return [];
+  }
+  if (!Number.isInteger(syllableCount) || syllableCount <= 0) {
+    return safeTokens.map((token) => [token]);
+  }
+
+  const target = Math.max(1, Math.min(syllableCount, safeTokens.length));
+  const base = Math.floor(safeTokens.length / target);
+  const remainder = safeTokens.length % target;
+  const groups = [];
+  let cursor = 0;
+
+  for (let idx = 0; idx < target; idx += 1) {
+    const size = base + (idx < remainder ? 1 : 0);
+    if (size <= 0) {
+      continue;
+    }
+    groups.push(safeTokens.slice(cursor, cursor + size));
+    cursor += size;
+  }
+
+  return groups;
+}
+
+function updateWordManualSyllableCount(sentenceIdx, wordIdx, rawValue) {
+  const sentence = sentences()[sentenceIdx];
+  const word = sentence?.words?.[wordIdx];
+  if (!word) {
+    return;
+  }
+
+  const text = String(rawValue ?? "").trim();
+  const parsed = normalizePositiveInt(text);
+  if (text && parsed === null) {
+    setStatus("音節數需為正整數。", true);
+    renderAll();
+    return;
+  }
+
+  const nextWord = {
+    ...word,
+    edited: true,
+  };
+  if (parsed === null) {
+    delete nextWord.manual_syllable_count;
+    setStatus(`${word.word || "word"} 已改回自動音節猜測。`);
+  } else {
+    nextWord.manual_syllable_count = parsed;
+    setStatus(`${word.word || "word"} 音節數已設為 ${parsed}。`);
+  }
+
+  state.payload.sentences[sentenceIdx].words[wordIdx] = nextWord;
+  state.sentenceIndex = sentenceIdx;
+  renderAll();
 }
 
 async function reprocessSentence(sentenceIdx, text) {
@@ -706,14 +886,12 @@ function buildPresentationSyllableColumns(tokens, tokenDetails) {
   }));
 }
 
-function buildPresentationFallbackColumns(tokens) {
-  const safeTokens = Array.isArray(tokens)
-    ? tokens.map((token) => String(token || "").trim()).filter((token) => token)
-    : [];
-  return safeTokens.map((token) => ({
+function buildPresentationFallbackColumns(tokens, syllableCount = null) {
+  const grouped = groupTokensBySyllable(tokens, syllableCount);
+  return grouped.map((group) => ({
     slots: {
       C1: [],
-      V: [token],
+      V: group,
       C2: [],
     },
   }));
@@ -732,10 +910,11 @@ function normalizePresentationColumnSlots(column) {
 function buildPresentationWordLayout(word) {
   const wordText = String(word?.word || "").trim();
   const { tokens, tokenDetails } = getPresentationTokensAndDetails(word);
+  const fallbackSyllableCount = fallbackSyllableCountForWord(word);
   const bySyllable = buildPresentationSyllableColumns(tokens, tokenDetails);
   const rawColumns = Array.isArray(bySyllable) && bySyllable.length > 0
     ? bySyllable
-    : buildPresentationFallbackColumns(tokens);
+    : buildPresentationFallbackColumns(tokens, fallbackSyllableCount);
 
   if (!Array.isArray(rawColumns) || rawColumns.length === 0) {
     return {

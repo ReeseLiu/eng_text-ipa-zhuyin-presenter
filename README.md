@@ -34,6 +34,7 @@ python scripts/build_browser_assets.py
 Notes:
 - Browser-only mode does not use `espeak-ng` fallback.
 - Unknown words (not found in CMUdict) can still be edited manually in IPA / Improved Zhuyin fields.
+- Unknown words in browser mode now include a guessed syllable count, and you can override it with the `音節數` control in edit mode to keep presentation/export grouping stable.
 
 ## Use
 
@@ -42,6 +43,7 @@ Notes:
 - Edit sentence text to recompute words, IPA, and Improved Zhuyin.
 - Edit a word to recompute that word.
 - Edit IPA tokens to recompute display values only.
+- For words without usable syllable metadata (especially CMUdict-missing words), use `音節數` to override how manual tokens are grouped in presentation and JSON export.
 - Switch between `文字 + IPA` and `文字 + 改良注音`.
 - Enter presentation mode and use left/right arrow keys to change sentences.
 - Use `匯出 JSON` for the draft JSON export payload.

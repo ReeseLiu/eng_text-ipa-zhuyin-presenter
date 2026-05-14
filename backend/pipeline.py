@@ -70,6 +70,80 @@ def _normalize_syllable_index(value: Any) -> int:
     return 0
 
 
+def _normalize_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer():
+        as_int = int(value)
+        return as_int if as_int > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        as_int = int(value.strip())
+        return as_int if as_int > 0 else None
+    return None
+
+
+def _guess_english_syllable_count(word_text: str) -> int:
+    text = str(word_text or "").lower().replace("’", "'")
+    text = re.sub(r"(?:'s|s')$", "", text)
+    text = re.sub(r"[^a-z]", "", text)
+    if not text:
+        return 1
+    if len(text) <= 3:
+        return 1
+
+    groups = re.findall(r"[aeiouy]+", text)
+    count = len(groups)
+
+    if text.endswith("e") and not re.search(r"[^aeiouy]le$", text):
+        count -= 1
+
+    return max(1, count)
+
+
+def _group_tokens_by_syllable(tokens: list[str], syllable_count: int | None) -> list[list[str]]:
+    compact = [token for token in tokens if token]
+    if not compact:
+        return []
+
+    if syllable_count is None:
+        return [[token] for token in compact]
+
+    target = max(1, min(syllable_count, len(compact)))
+    base = len(compact) // target
+    remainder = len(compact) % target
+    groups: list[list[str]] = []
+    cursor = 0
+
+    for idx in range(target):
+        size = base + (1 if idx < remainder else 0)
+        if size <= 0:
+            continue
+        groups.append(compact[cursor : cursor + size])
+        cursor += size
+
+    return groups
+
+
+def _fallback_syllable_count_for_word(word: dict[str, Any], surface_text: str) -> int | None:
+    manual = _normalize_positive_int(word.get("manual_syllable_count"))
+    if manual is not None:
+        return manual
+
+    guessed = _normalize_positive_int(word.get("syllable_count_guess"))
+    if guessed is not None:
+        return guessed
+
+    raw_ipa = word.get("ipa")
+    has_ipa = isinstance(raw_ipa, list) and any(str(token or "").strip() for token in raw_ipa)
+    source = str(word.get("g2p_source") or "")
+    if source == "missing" or not has_ipa:
+        return _guess_english_syllable_count(str(word.get("word") or surface_text or ""))
+
+    return None
+
+
 def _parse_zhuyin_numbers(token: str, phonetic_number_map: dict[str, int], sorted_symbols: list[str]) -> list[int]:
     text = str(token or "").strip()
     if not text:
@@ -109,6 +183,7 @@ def _build_phonetic_slots(
     token_details: list[dict],
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
+    fallback_syllable_count: int | None = None,
 ) -> list[Any]:
     tokens = [str(token or "").strip() for token in display_zhuyin_tokens]
     if not tokens:
@@ -116,11 +191,16 @@ def _build_phonetic_slots(
 
     if len(tokens) != len(token_details):
         fallback: list[Any] = []
-        for token in tokens:
-            numbers = _parse_zhuyin_numbers(token, phonetic_number_map, sorted_symbols)
-            if not numbers:
+        for group in _group_tokens_by_syllable(tokens, fallback_syllable_count):
+            group_numbers: list[int] = []
+            for token in group:
+                numbers = _parse_zhuyin_numbers(token, phonetic_number_map, sorted_symbols)
+                if not numbers:
+                    continue
+                group_numbers.extend(numbers)
+            if not group_numbers:
                 continue
-            fallback.append(numbers if len(numbers) > 1 else numbers[0])
+            fallback.append(group_numbers if len(group_numbers) > 1 else group_numbers[0])
         return fallback
 
     syllable_map: dict[int, dict[str, list[int]]] = {}
@@ -201,8 +281,15 @@ def _word_to_jason_token(
     zhuyin_tokens = display_zhuyin if isinstance(display_zhuyin, list) else []
     token_details = word.get("token_details") if isinstance(word, dict) else []
     details = token_details if isinstance(token_details, list) else []
+    fallback_syllable_count = _fallback_syllable_count_for_word(word, surface_text)
 
-    token["phonetic"] = _build_phonetic_slots(zhuyin_tokens, details, phonetic_number_map, sorted_symbols)
+    token["phonetic"] = _build_phonetic_slots(
+        zhuyin_tokens,
+        details,
+        phonetic_number_map,
+        sorted_symbols,
+        fallback_syllable_count=fallback_syllable_count,
+    )
     token["kkPhonetic"] = _token_kk_phonetic(word)
     return token
 
@@ -392,7 +479,7 @@ class Pipeline:
             word_text=record.get("word"),
             display_exceptions=self.display_exceptions,
         )
-        return {
+        word_payload = {
             "word_id": str(word_index),
             "word": record.get("word", ""),
             "word_norm": record.get("word_norm", ""),
@@ -402,6 +489,11 @@ class Pipeline:
             "token_details": token_details,
             "edited": False,
         }
+
+        if not ipa_tokens or str(record.get("g2p_source") or "") == "missing":
+            word_payload["syllable_count_guess"] = _guess_english_syllable_count(str(record.get("word") or ""))
+
+        return word_payload
 
 
 def normalize_ipa_tokens(value: Any) -> list[str]:
