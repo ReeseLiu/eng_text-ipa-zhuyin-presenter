@@ -349,6 +349,70 @@ button.secondary {
   color: #314650;
 }
 
+.manual-syllable-editor {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #dce7ee;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.manual-syllable-header,
+.manual-syllable-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manual-syllable-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.manual-syllable-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.manual-syllable-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  color: #5f7481;
+  padding: 4px 6px;
+  border-bottom: 1px solid #e2ebf1;
+}
+
+.manual-syllable-table td {
+  padding: 5px 6px;
+  vertical-align: middle;
+}
+
+.manual-syllable-input {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  border: 1px solid #d6e1e9;
+  background: #fff;
+}
+
+.mini-action {
+  border: 1px solid #d4e0e8;
+  background: #fff;
+  color: #47626f;
+  border-radius: 8px;
+  min-height: 30px;
+  padding: 4px 9px;
+  font-size: 0.76rem;
+}
+
+.mini-action.primary {
+  border-color: #7c98a6;
+  background: #eef4f7;
+}
+
 .phoneme-keyboard {
   display: flex;
   flex-wrap: wrap;

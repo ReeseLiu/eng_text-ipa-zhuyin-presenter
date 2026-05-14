@@ -463,6 +463,360 @@ function buildSyllableCountControl(sentenceIdx, wordIdx, word) {
   return wrap;
 }
 
+function normalizeSlotLabel(value) {
+  const slot = String(value || "").toUpperCase();
+  return PRESENTATION_SLOT_ORDER.includes(slot) ? slot : "V";
+}
+
+function stringifySlotTokens(value) {
+  if (Array.isArray(value)) {
+    return value.map((token) => String(token || "").trim()).filter((token) => token).join(" ");
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return "";
+}
+
+function parseSlotText(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return [];
+  }
+  return raw.split(/[\s,]+/).filter((part) => part);
+}
+
+function firstNonEmpty(arr) {
+  if (!Array.isArray(arr)) {
+    return "";
+  }
+  for (const item of arr) {
+    const text = String(item || "").trim();
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+}
+
+const WORD_SEGMENT_HINTS = {
+  sometimes: ["some", "times"],
+  someone: ["some", "one"],
+  somebody: ["some", "body"],
+  something: ["some", "thing"],
+  somewhere: ["some", "where"],
+  everyone: ["every", "one"],
+  everybody: ["every", "body"],
+  everything: ["every", "thing"],
+  however: ["how", "ever"],
+  whatever: ["what", "ever"],
+  whenever: ["when", "ever"],
+  wherever: ["where", "ever"],
+  headquarters: ["head", "quar", "ters"],
+  measurement: ["mea", "sure", "ment"],
+  membership: ["mem", "ber", "ship"],
+  temperature: ["tem", "pera", "ture"],
+  shareholder: ["share", "hol", "der"],
+  convention: ["con", "ven", "tion"],
+  independence: ["in", "de", "pen", "dence"],
+  theoretical: ["the", "o", "re", "ti", "cal"],
+  concentration: ["con", "cen", "tra", "tion"],
+  accommodation: ["a", "cco", "mmo", "da", "tion"],
+  communication: ["co", "mmu", "ni", "ca", "tion"],
+  revolutionary: ["re", "vo", "lu", "tio", "na", "ry"],
+};
+
+function splitWordWithHints(wordText, syllableCount) {
+  const trimmed = String(wordText || "").trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const matched = trimmed.match(/^([A-Za-z']+)([.,!?;:…]*)$/);
+  if (!matched) {
+    return [trimmed];
+  }
+
+  const [, coreWord, punct] = matched;
+  const normalized = coreWord.toLowerCase();
+  const hinted = WORD_SEGMENT_HINTS[normalized];
+  if (!Array.isArray(hinted) || hinted.length === 0) {
+    return [trimmed];
+  }
+
+  const built = hinted.map((part, idx) => {
+    if (idx === hinted.length - 1) {
+      return `${part}${punct || ""}`;
+    }
+    return part;
+  });
+
+  if (Number.isInteger(syllableCount) && syllableCount > 0 && built.length !== syllableCount) {
+    return [trimmed];
+  }
+
+  return built;
+}
+
+function phoneticRowsFromTokensAndDetails(word) {
+  const zhuyinTokens = displayTokensRawForSystem(word, "zhuyin_plus");
+  const details = Array.isArray(word?.token_details) ? word.token_details : [];
+
+  if (zhuyinTokens.length === 0) {
+    return [];
+  }
+
+  if (details.length === zhuyinTokens.length && details.length > 0) {
+    const bySyllable = new Map();
+    zhuyinTokens.forEach((tokenRaw, idx) => {
+      const token = String(tokenRaw || "").trim();
+      if (!token) {
+        return;
+      }
+      const detail = details[idx] && typeof details[idx] === "object" ? details[idx] : {};
+      const slot = normalizeSlotLabel(detail.syllable_slot);
+      const rawSyllable = Number(detail.syllable_index);
+      const syllableIndex = Number.isFinite(rawSyllable) ? Math.max(0, Math.trunc(rawSyllable)) : 0;
+      if (!bySyllable.has(syllableIndex)) {
+        bySyllable.set(syllableIndex, { C1: [], V: [], C2: [] });
+      }
+      bySyllable.get(syllableIndex)[slot].push(token);
+    });
+
+    const indices = Array.from(bySyllable.keys()).sort((a, b) => a - b);
+    return indices
+      .map((index) => bySyllable.get(index))
+      .filter((slots) => firstNonEmpty(slots?.C1) || firstNonEmpty(slots?.V) || firstNonEmpty(slots?.C2));
+  }
+
+  const fallbackSyllableCount = fallbackSyllableCountForWord(word);
+  const grouped = groupTokensBySyllable(zhuyinTokens, fallbackSyllableCount);
+  return grouped.map((group) => ({
+    C1: [],
+    V: group,
+    C2: [],
+  }));
+}
+
+function normalizeManualSyllables(rawRows, wordText = "") {
+  const sourceRows = Array.isArray(rawRows) ? rawRows : [];
+  const rows = sourceRows
+    .filter((row) => row && typeof row === "object")
+    .map((row) => {
+      const slotsRaw = row.slots && typeof row.slots === "object" ? row.slots : {};
+      const slots = {
+        C1: parseSlotText(slotsRaw.C1),
+        V: parseSlotText(slotsRaw.V),
+        C2: parseSlotText(slotsRaw.C2),
+      };
+      return {
+        text: String(row.text || "").trim(),
+        slots,
+      };
+    })
+    .filter((row) => row.text || row.slots.C1.length > 0 || row.slots.V.length > 0 || row.slots.C2.length > 0);
+
+  if (rows.length > 0 && !rows.some((row) => row.text)) {
+    rows[0].text = String(wordText || "").trim();
+  }
+
+  return rows;
+}
+
+function buildAutoManualSyllables(word) {
+  const rows = phoneticRowsFromTokensAndDetails(word);
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const wordText = String(word?.word || "").trim();
+  const splitHint = splitWordWithHints(wordText, rows.length);
+
+  return rows.map((slots, idx) => {
+    const hinted = splitHint[idx] || "";
+    return {
+      text: idx === 0
+        ? (hinted || (splitHint.length > 0 ? "" : wordText))
+        : hinted,
+      slots: {
+        C1: [...(Array.isArray(slots.C1) ? slots.C1 : [])],
+        V: [...(Array.isArray(slots.V) ? slots.V : [])],
+        C2: [...(Array.isArray(slots.C2) ? slots.C2 : [])],
+      },
+    };
+  });
+}
+
+function resolveManualSyllables(word) {
+  const normalized = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  return buildAutoManualSyllables(word);
+}
+
+function shouldShowManualSyllableEditor(word) {
+  const manual = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
+  if (manual.length > 0) {
+    return true;
+  }
+  const source = String(word?.g2p_source || "");
+  return source === "missing" || hasUsableTokenDetails(word);
+}
+
+function saveWordManualSyllables(sentenceIdx, wordIdx, rows, options = {}) {
+  const sentence = sentences()[sentenceIdx];
+  const word = sentence?.words?.[wordIdx];
+  if (!word) {
+    return;
+  }
+
+  const normalizedRows = normalizeManualSyllables(rows, String(word.word || ""));
+  const nextWord = {
+    ...word,
+    edited: true,
+  };
+
+  if (normalizedRows.length > 0) {
+    nextWord.manual_syllables = normalizedRows;
+    setStatus(options.message || `${word.word || "word"} 音節表已更新。`);
+  } else {
+    delete nextWord.manual_syllables;
+    setStatus(options.message || `${word.word || "word"} 已改回自動音節表。`);
+  }
+
+  state.payload.sentences[sentenceIdx].words[wordIdx] = nextWord;
+  state.sentenceIndex = sentenceIdx;
+  renderAll();
+}
+
+function buildManualSyllableEditor(sentenceIdx, wordIdx, word) {
+  const rows = resolveManualSyllables(word);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "manual-syllable-editor";
+
+  const header = document.createElement("div");
+  header.className = "manual-syllable-header";
+  const title = document.createElement("p");
+  title.className = "field-label";
+  title.textContent = "拼字音節 / C1VC2";
+
+  const controls = document.createElement("div");
+  controls.className = "manual-syllable-actions";
+
+  const autofillBtn = document.createElement("button");
+  autofillBtn.type = "button";
+  autofillBtn.className = "mini-action";
+  autofillBtn.textContent = "自動帶入";
+  autofillBtn.addEventListener("click", () => {
+    const nextRows = buildAutoManualSyllables(word);
+    if (nextRows.length === 0) {
+      setStatus(`${word.word || "word"} 沒有可帶入的音節資料。`, true);
+      return;
+    }
+    saveWordManualSyllables(sentenceIdx, wordIdx, nextRows, {
+      message: `${word.word || "word"} 已自動帶入音節表。`,
+    });
+  });
+
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "mini-action";
+  resetBtn.textContent = "清除手動";
+  resetBtn.addEventListener("click", () => {
+    saveWordManualSyllables(sentenceIdx, wordIdx, [], {
+      message: `${word.word || "word"} 已清除手動音節表。`,
+    });
+  });
+
+  controls.append(autofillBtn, resetBtn);
+  header.append(title, controls);
+  wrapper.appendChild(header);
+
+  const table = document.createElement("table");
+  table.className = "manual-syllable-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["拼字音節", "C1", "V", "C2"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const inputRefs = [];
+
+  rows.forEach((row, idx) => {
+    const tr = document.createElement("tr");
+    const cells = [
+      row.text || "",
+      stringifySlotTokens(row.slots?.C1),
+      stringifySlotTokens(row.slots?.V),
+      stringifySlotTokens(row.slots?.C2),
+    ];
+    cells.forEach((value) => {
+      const td = document.createElement("td");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "manual-syllable-input";
+      input.value = value;
+      input.placeholder = idx === 0 ? "可留空" : "可留空";
+      inputRefs.push(input);
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+
+  const footer = document.createElement("div");
+  footer.className = "manual-syllable-footer";
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "mini-action";
+  addBtn.textContent = "+ 音節";
+  addBtn.addEventListener("click", () => {
+    const nextRows = rows.concat([{ text: "", slots: { C1: [], V: [], C2: [] } }]);
+    saveWordManualSyllables(sentenceIdx, wordIdx, nextRows, {
+      message: `${word.word || "word"} 已新增音節列。`,
+    });
+  });
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "mini-action primary";
+  saveBtn.textContent = "套用音節表";
+  saveBtn.addEventListener("click", () => {
+    const nextRows = [];
+    const trNodes = Array.from(tbody.querySelectorAll("tr"));
+    trNodes.forEach((tr) => {
+      const inputs = Array.from(tr.querySelectorAll("input"));
+      nextRows.push({
+        text: String(inputs[0]?.value || "").trim(),
+        slots: {
+          C1: parseSlotText(inputs[1]?.value),
+          V: parseSlotText(inputs[2]?.value),
+          C2: parseSlotText(inputs[3]?.value),
+        },
+      });
+    });
+    saveWordManualSyllables(sentenceIdx, wordIdx, nextRows, {
+      message: `${word.word || "word"} 已套用音節表。`,
+    });
+  });
+
+  footer.append(addBtn, saveBtn);
+  wrapper.appendChild(footer);
+
+  return wrapper;
+}
+
 function buildWordRow(sentenceIdx, wordIdx, word) {
   const row = document.createElement("div");
   row.className = "word-row";
@@ -489,6 +843,9 @@ function buildWordRow(sentenceIdx, wordIdx, word) {
   }
 
   wordCell.append(wordLabel, wordInput, metaRow);
+  if (shouldShowManualSyllableEditor(word)) {
+    wordCell.appendChild(buildManualSyllableEditor(sentenceIdx, wordIdx, word));
+  }
 
   const ipaCell = document.createElement("div");
   const editLabel = document.createElement("p");
@@ -937,6 +1294,27 @@ function normalizePresentationColumnSlots(column) {
 }
 
 function buildPresentationWordLayout(word) {
+  const manualSyllables = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
+  if (manualSyllables.length > 0) {
+    const columns = manualSyllables.map((row) => normalizePresentationColumnSlots({
+      slots: {
+        C1: row.slots.C1,
+        V: row.slots.V,
+        C2: row.slots.C2,
+      },
+    }));
+    const wordText = manualSyllables.map((row) => String(row.text || "").trim()).filter((part) => part).join(" ")
+      || String(word?.word || "").trim();
+    const tokenCount = columns.reduce((count, column) => {
+      return count + PRESENTATION_SLOT_ORDER.reduce((inner, slot) => inner + (column.slots[slot] || []).length, 0);
+    }, 0);
+    return {
+      wordText,
+      columns,
+      tokenCount,
+    };
+  }
+
   const wordText = String(word?.word || "").trim();
   const { tokens, tokenDetails } = getPresentationTokensAndDetails(word);
   const fallbackSyllableCount = fallbackSyllableCountForWord(word);

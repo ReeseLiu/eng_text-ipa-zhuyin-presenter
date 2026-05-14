@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,33 @@ DISPLAY_EXCEPTIONS_PATH = DATA_DIR / "display_mapping_exceptions.json"
 PHONETIC_NUMBER_TABLE_PATH = DATA_DIR / "display_mapping_table_phonetic_number.csv"
 CMUDICT_PATH = DATA_DIR / "cmudict.dict"
 JASON_SLOT_ORDER = ("C1", "V", "C2")
+WORD_SEGMENT_HINTS: dict[str, list[str]] = {
+    "sometimes": ["some", "times"],
+    "someone": ["some", "one"],
+    "somebody": ["some", "body"],
+    "something": ["some", "thing"],
+    "somewhere": ["some", "where"],
+    "everyone": ["every", "one"],
+    "everybody": ["every", "body"],
+    "everything": ["every", "thing"],
+    "however": ["how", "ever"],
+    "whatever": ["what", "ever"],
+    "whenever": ["when", "ever"],
+    "wherever": ["where", "ever"],
+    "headquarters": ["head", "quar", "ters"],
+    "measurement": ["mea", "sure", "ment"],
+    "membership": ["mem", "ber", "ship"],
+    "temperature": ["tem", "pera", "ture"],
+    "shareholder": ["share", "hol", "der"],
+    "convention": ["con", "ven", "tion"],
+    "independence": ["in", "de", "pen", "dence"],
+    "theoretical": ["the", "o", "re", "ti", "cal"],
+    "concentration": ["con", "cen", "tra", "tion"],
+    "accommodation": ["a", "cco", "mmo", "da", "tion"],
+    "communication": ["co", "mmu", "ni", "ca", "tion"],
+    "revolutionary": ["re", "vo", "lu", "tio", "na", "ry"],
+}
+WORD_WITH_PUNCT_RE = re.compile(r"^([A-Za-z']+)([.,!?;:…]*)$")
 
 
 def load_phonetic_number_table_csv(path: Path) -> tuple[dict[str, int], list[str]]:
@@ -126,6 +154,40 @@ def _group_tokens_by_syllable(tokens: list[str], syllable_count: int | None) -> 
     return groups
 
 
+def _split_surface_text_for_rows(surface_text: str, row_count: int) -> list[str]:
+    if row_count <= 0:
+        return []
+
+    trimmed = str(surface_text or "").strip()
+    if row_count == 1:
+        return [trimmed]
+    if not trimmed:
+        return ["" for _ in range(row_count)]
+
+    matched = WORD_WITH_PUNCT_RE.match(trimmed)
+    if not matched:
+        return [trimmed, *([""] * (row_count - 1))]
+
+    core_word, punct = matched.groups()
+    hinted = WORD_SEGMENT_HINTS.get(core_word.lower())
+    if not isinstance(hinted, list) or len(hinted) != row_count:
+        return [trimmed, *([""] * (row_count - 1))]
+
+    built: list[str] = []
+    for idx, hint_raw in enumerate(hinted):
+        hint = str(hint_raw or "").strip()
+        if not hint:
+            return [trimmed, *([""] * (row_count - 1))]
+        if idx == len(hinted) - 1 and punct:
+            hint = f"{hint}{punct}"
+        built.append(hint)
+
+    if core_word[:1].isupper() and built and built[0]:
+        built[0] = built[0][:1].upper() + built[0][1:]
+
+    return built
+
+
 def _fallback_syllable_count_for_word(word: dict[str, Any], surface_text: str) -> int | None:
     manual = _normalize_positive_int(word.get("manual_syllable_count"))
     if manual is not None:
@@ -176,6 +238,74 @@ def _parse_zhuyin_numbers(token: str, phonetic_number_map: dict[str, int], sorte
 
     segmented = walk(0)
     return segmented if segmented is not None else []
+
+
+def _normalize_slot_tokens(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(token or "").strip() for token in value if str(token or "").strip()]
+    if isinstance(value, str):
+        return [part for part in re.split(r"[\s,]+", value.strip()) if part]
+    return []
+
+
+def _build_phonetic_row_from_slots(
+    slots: dict[str, Any],
+    phonetic_number_map: dict[str, int],
+    sorted_symbols: list[str],
+) -> list[Any]:
+    row: list[Any] = []
+    for slot in JASON_SLOT_ORDER:
+        slot_tokens = _normalize_slot_tokens(slots.get(slot))
+        if not slot_tokens:
+            continue
+
+        merged_numbers: list[int] = []
+        parsed_token_count = 0
+        for token in slot_tokens:
+            numbers = _parse_zhuyin_numbers(token, phonetic_number_map, sorted_symbols)
+            if not numbers:
+                continue
+            merged_numbers.extend(numbers)
+            parsed_token_count += 1
+
+        if not merged_numbers:
+            continue
+        if len(merged_numbers) > 1 or parsed_token_count > 1:
+            row.append(merged_numbers)
+        else:
+            row.append(merged_numbers[0])
+
+    return row
+
+
+def _build_manual_phonetic_rows(
+    word: dict[str, Any],
+    surface_text: str,
+    phonetic_number_map: dict[str, int],
+    sorted_symbols: list[str],
+) -> list[dict[str, Any]]:
+    raw_rows = word.get("manual_syllables") if isinstance(word, dict) else None
+    if not isinstance(raw_rows, list):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for row_raw in raw_rows:
+        if not isinstance(row_raw, dict):
+            continue
+        text = str(row_raw.get("text") or "")
+        slots = row_raw.get("slots") if isinstance(row_raw.get("slots"), dict) else {}
+        phonetic = _build_phonetic_row_from_slots(slots, phonetic_number_map, sorted_symbols)
+        if not phonetic:
+            continue
+        rows.append({
+            "text": text,
+            "phonetic": phonetic,
+        })
+
+    if rows and not any(str(row.get("text") or "").strip() for row in rows):
+        rows[0]["text"] = surface_text
+
+    return rows
 
 
 def _build_phonetic_rows(
@@ -258,14 +388,50 @@ def _token_kk_phonetic(word: dict[str, Any]) -> str:
     return ""
 
 
+def _token_id_for(sentence_id: str, word_group_index: int, token_index: int, token: dict[str, Any]) -> str:
+    seed = {
+        "sentenceId": str(sentence_id or ""),
+        "wordGroupIndex": int(word_group_index),
+        "tokenIndex": int(token_index),
+        "text": str(token.get("text") or ""),
+        "phonetic": token.get("phonetic") if isinstance(token.get("phonetic"), list) else [],
+        "kkPhonetic": str(token.get("kkPhonetic") or ""),
+    }
+    encoded = json.dumps(seed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = _stable_hash16(encoded)
+    return f"tok_{digest}"
+
+
+def _stable_hash16(value: str) -> str:
+    h = 0xCBF29CE484222325
+    prime = 0x100000001B3
+    mask = (1 << 64) - 1
+    for byte in value.encode("utf-8"):
+        h ^= byte
+        h = (h * prime) & mask
+    return f"{h:016x}"
+
+
+def _finalize_jason_token(sentence_id: str, word_group_index: int, token_index: int, token: dict[str, Any]) -> dict[str, Any]:
+    safe_token = token if isinstance(token, dict) else {}
+    safe_token["text"] = str(safe_token.get("text") or "")
+    if not isinstance(safe_token.get("phonetic"), list):
+        safe_token["phonetic"] = []
+    safe_token["toneLevel"] = 0
+    safe_token["toneStyle"] = "solid-short"
+    safe_token["importance"] = "important" if safe_token["phonetic"] else "not-important"
+    safe_token["tokenId"] = _token_id_for(sentence_id, word_group_index, token_index, safe_token)
+    return safe_token
+
+
 def _blank_jason_token(text: str) -> dict[str, Any]:
     return {
         "tokenId": "",
         "text": str(text or ""),
-        "toneLevel": None,
-        "toneStyle": None,
+        "toneLevel": 0,
+        "toneStyle": "solid-short",
         "phonetic": [],
-        "importance": None,
+        "importance": "not-important",
         "reason": "",
         "kkPhonetic": "",
         "partOfSpeech": None,
@@ -287,6 +453,16 @@ def _word_to_jason_tokens(
     fallback_syllable_count = _fallback_syllable_count_for_word(word, surface_text)
     kk_phonetic = _token_kk_phonetic(word)
 
+    manual_rows = _build_manual_phonetic_rows(word, surface_text, phonetic_number_map, sorted_symbols)
+    if manual_rows:
+        tokens: list[dict[str, Any]] = []
+        for idx, row in enumerate(manual_rows):
+            token = _blank_jason_token(str(row.get("text") or (surface_text if idx == 0 else "")))
+            token["phonetic"] = row.get("phonetic") if isinstance(row.get("phonetic"), list) else []
+            token["kkPhonetic"] = kk_phonetic
+            tokens.append(token)
+        return tokens
+
     phonetic_rows = _build_phonetic_rows(
         zhuyin_tokens,
         details,
@@ -301,10 +477,11 @@ def _word_to_jason_tokens(
         return [token]
 
     tokens: list[dict[str, Any]] = []
+    split_texts = _split_surface_text_for_rows(surface_text, len(phonetic_rows))
     for idx, row in enumerate(phonetic_rows):
-        token = _blank_jason_token(surface_text if idx == 0 else "")
+        token = _blank_jason_token(split_texts[idx] if idx < len(split_texts) else (surface_text if idx == 0 else ""))
         token["phonetic"] = row
-        token["kkPhonetic"] = kk_phonetic if idx == 0 else ""
+        token["kkPhonetic"] = kk_phonetic
         tokens.append(token)
     return tokens
 
@@ -329,6 +506,7 @@ def _convert_sentence_to_jason(
     sorted_symbols: list[str],
 ) -> dict[str, Any]:
     sentence_text = str(sentence.get("text") or sentence.get("sentence") or "")
+    sentence_id = str(sentence.get("sentence_id") or sentence.get("sentenceId") or "")
     surface_tokens = _sentence_surface_tokens(sentence_text)
     source_words = _sentence_words(sentence)
     source_idx = 0
@@ -353,9 +531,17 @@ def _convert_sentence_to_jason(
             )
         )
 
+    for word_group_index, word_group in enumerate(words_output):
+        if not isinstance(word_group, list):
+            continue
+        for token_index, token in enumerate(word_group):
+            if not isinstance(token, dict):
+                continue
+            word_group[token_index] = _finalize_jason_token(sentence_id, word_group_index, token_index, token)
+
     tags = sentence.get("tags")
     return {
-        "sentenceId": str(sentence.get("sentence_id") or sentence.get("sentenceId") or ""),
+        "sentenceId": sentence_id,
         "sentence": sentence_text,
         "words": words_output,
         "tags": tags if isinstance(tags, list) else [],

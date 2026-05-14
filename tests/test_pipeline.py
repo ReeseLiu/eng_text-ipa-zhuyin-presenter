@@ -45,7 +45,10 @@ class PipelineTest(unittest.TestCase):
         first_token = sentence["words"][0][0]
         self.assertEqual(first_token["text"], "I'm")
         self.assertEqual(first_token["phonetic"], [51, 7])
-        self.assertIsNone(first_token["toneLevel"])
+        self.assertEqual(first_token["toneLevel"], 0)
+        self.assertEqual(first_token["toneStyle"], "solid-short")
+        self.assertEqual(first_token["importance"], "important")
+        self.assertTrue(str(first_token["tokenId"]).startswith("tok_"))
         self.assertEqual(first_token["reason"], "")
 
     def test_export_json_wraps_multi_consonant_slots(self):
@@ -123,6 +126,83 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(word_group[0]["phonetic"], [1, 44])
         self.assertEqual(word_group[1]["phonetic"], [12, 49])
         self.assertEqual(word_group[2]["phonetic"], [12, 44])
+
+    def test_export_json_prefers_manual_syllables_with_text_split(self):
+        payload = pipeline.process_text("sometimes.", "unit")
+        word = payload["sentences"][0]["words"][0]
+        word["manual_syllables"] = [
+            {
+                "text": "some",
+                "slots": {
+                    "C1": ["ㄙ"],
+                    "V": ["ㄜ"],
+                    "C2": ["ㄇ~"],
+                },
+            },
+            {
+                "text": "times.",
+                "slots": {
+                    "C1": ["ㄊ(摩)"],
+                    "V": ["ㄞ"],
+                    "C2": ["ㄇ~", "z"],
+                },
+            },
+        ]
+
+        exported = pipeline.export_json(payload)
+        word_group = exported[0]["words"][0]
+        self.assertEqual(len(word_group), 2)
+        self.assertEqual(word_group[0]["text"], "some")
+        self.assertEqual(word_group[1]["text"], "times.")
+        self.assertEqual(word_group[0]["phonetic"], [38, 44, 7])
+        self.assertEqual(word_group[1]["phonetic"], [15, 51, [7, 39]])
+
+    def test_export_json_manual_syllables_parse_comma_delimited_slot_text(self):
+        payload = pipeline.process_text("sometimes.", "unit")
+        word = payload["sentences"][0]["words"][0]
+        word["manual_syllables"] = [
+            {
+                "text": "some",
+                "slots": {
+                    "C1": "ㄙ",
+                    "V": "ㄜ",
+                    "C2": "ㄇ~",
+                },
+            },
+            {
+                "text": "times.",
+                "slots": {
+                    "C1": "ㄊ(摩)",
+                    "V": "ㄞ",
+                    "C2": "ㄇ~, z",
+                },
+            },
+        ]
+
+        exported = pipeline.export_json(payload)
+        word_group = exported[0]["words"][0]
+        self.assertEqual(len(word_group), 2)
+        self.assertEqual(word_group[0]["text"], "some")
+        self.assertEqual(word_group[1]["text"], "times.")
+        self.assertEqual(word_group[0]["phonetic"], [38, 44, 7])
+        self.assertEqual(word_group[1]["phonetic"], [15, 51, [7, 39]])
+
+    def test_export_json_known_word_split_and_metadata(self):
+        payload = pipeline.process_text("headquarters,", "unit")
+        exported = pipeline.export_json(payload)
+        word_group = exported[0]["words"][0]
+
+        self.assertEqual(len(word_group), 3)
+        self.assertEqual([token["text"] for token in word_group], ["head", "quar", "ters,"])
+        self.assertEqual(word_group[0]["phonetic"], [23, 45, [16, 25]])
+        self.assertEqual(word_group[1]["phonetic"], [60, 71])
+        self.assertEqual(word_group[2]["phonetic"], [15, 47, 39])
+        self.assertEqual(word_group[0]["kkPhonetic"], word_group[1]["kkPhonetic"])
+        self.assertEqual(word_group[0]["kkPhonetic"], word_group[2]["kkPhonetic"])
+        self.assertEqual(word_group[0]["toneStyle"], "solid-short")
+        self.assertEqual(word_group[1]["toneLevel"], 0)
+        self.assertEqual(word_group[2]["importance"], "important")
+        self.assertTrue(str(word_group[0]["tokenId"]).startswith("tok_"))
 
 
 if __name__ == "__main__":

@@ -218,6 +218,33 @@
   };
 
   const PUNCT_STRIP_RE = /[.,!?;:…]+$/;
+  const WORD_WITH_PUNCT_RE = /^([A-Za-z']+)([.,!?;:…]*)$/;
+  const WORD_SEGMENT_HINTS = {
+    sometimes: ["some", "times"],
+    someone: ["some", "one"],
+    somebody: ["some", "body"],
+    something: ["some", "thing"],
+    somewhere: ["some", "where"],
+    everyone: ["every", "one"],
+    everybody: ["every", "body"],
+    everything: ["every", "thing"],
+    however: ["how", "ever"],
+    whatever: ["what", "ever"],
+    whenever: ["when", "ever"],
+    wherever: ["where", "ever"],
+    headquarters: ["head", "quar", "ters"],
+    measurement: ["mea", "sure", "ment"],
+    membership: ["mem", "ber", "ship"],
+    temperature: ["tem", "pera", "ture"],
+    shareholder: ["share", "hol", "der"],
+    convention: ["con", "ven", "tion"],
+    independence: ["in", "de", "pen", "dence"],
+    theoretical: ["the", "o", "re", "ti", "cal"],
+    concentration: ["con", "cen", "tra", "tion"],
+    accommodation: ["a", "cco", "mmo", "da", "tion"],
+    communication: ["co", "mmu", "ni", "ca", "tion"],
+    revolutionary: ["re", "vo", "lu", "tio", "na", "ry"],
+  };
 
   function escapeRegex(text) {
     return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -936,6 +963,47 @@
     return groups;
   }
 
+  function splitSurfaceTextForRows(surfaceText, rowCount) {
+    const safeCount = Number.isInteger(rowCount) ? rowCount : 0;
+    if (safeCount <= 0) {
+      return [];
+    }
+
+    const trimmed = String(surfaceText || "").trim();
+    if (safeCount === 1) {
+      return [trimmed];
+    }
+    if (!trimmed) {
+      return Array.from({ length: safeCount }, () => "");
+    }
+
+    const matched = trimmed.match(WORD_WITH_PUNCT_RE);
+    if (!matched) {
+      return [trimmed, ...Array.from({ length: safeCount - 1 }, () => "")];
+    }
+
+    const [, coreWord, punct] = matched;
+    const hinted = WORD_SEGMENT_HINTS[String(coreWord || "").toLowerCase()];
+    if (!Array.isArray(hinted) || hinted.length !== safeCount) {
+      return [trimmed, ...Array.from({ length: safeCount - 1 }, () => "")];
+    }
+
+    const built = [];
+    for (let idx = 0; idx < hinted.length; idx += 1) {
+      const part = String(hinted[idx] || "").trim();
+      if (!part) {
+        return [trimmed, ...Array.from({ length: safeCount - 1 }, () => "")];
+      }
+      built.push(idx === hinted.length - 1 ? `${part}${punct || ""}` : part);
+    }
+
+    if (/^[A-Z]/.test(coreWord) && built.length > 0 && built[0]) {
+      built[0] = built[0][0].toUpperCase() + built[0].slice(1);
+    }
+
+    return built;
+  }
+
   function fallbackSyllableCountForWord(word, surfaceText = "") {
     const manual = normalizePositiveInt(word?.manual_syllable_count);
     if (manual !== null) {
@@ -1000,6 +1068,69 @@
 
     const segmented = walk(0);
     return Array.isArray(segmented) ? segmented : [];
+  }
+
+  function normalizeSlotTokens(value) {
+    if (Array.isArray(value)) {
+      return value.map((token) => String(token || "").trim()).filter((token) => token);
+    }
+    if (typeof value === "string") {
+      return value.trim().split(/[\s,]+/).filter((part) => part);
+    }
+    return [];
+  }
+
+  function buildPhoneticRowFromSlots(slots, phoneticNumberTable, sortedSymbols) {
+    const row = [];
+    JASON_SLOT_ORDER.forEach((slot) => {
+      const slotTokens = normalizeSlotTokens(slots?.[slot]);
+      if (slotTokens.length === 0) {
+        return;
+      }
+
+      const merged = [];
+      let parsedTokenCount = 0;
+      slotTokens.forEach((token) => {
+        const numbers = parseZhuyinNumbers(token, phoneticNumberTable, sortedSymbols);
+        if (numbers.length === 0) {
+          return;
+        }
+        merged.push(...numbers);
+        parsedTokenCount += 1;
+      });
+
+      if (merged.length === 0) {
+        return;
+      }
+      if (merged.length > 1 || parsedTokenCount > 1) {
+        row.push(merged);
+      } else {
+        row.push(merged[0]);
+      }
+    });
+    return row;
+  }
+
+  function buildManualPhoneticRows(word, surfaceText, phoneticNumberTable, sortedSymbols) {
+    const rawRows = Array.isArray(word?.manual_syllables) ? word.manual_syllables : [];
+    const rows = [];
+    rawRows.forEach((rowRaw) => {
+      if (!rowRaw || typeof rowRaw !== "object" || Array.isArray(rowRaw)) {
+        return;
+      }
+      const text = String(rowRaw.text || "");
+      const slots = rowRaw.slots && typeof rowRaw.slots === "object" ? rowRaw.slots : {};
+      const phonetic = buildPhoneticRowFromSlots(slots, phoneticNumberTable, sortedSymbols);
+      if (phonetic.length === 0) {
+        return;
+      }
+      rows.push({ text, phonetic });
+    });
+
+    if (rows.length > 0 && !rows.some((row) => String(row.text || "").trim())) {
+      rows[0].text = surfaceText;
+    }
+    return rows;
   }
 
   function buildPhoneticRows(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols, fallbackSyllableCount = null) {
@@ -1095,14 +1226,53 @@
     return ipaTokens.map((token) => String(token || "")).join("");
   }
 
+  function stableHash16(value) {
+    let h = 0xCBF29CE484222325n;
+    const prime = 0x100000001B3n;
+    const mask = (1n << 64n) - 1n;
+    const bytes = new TextEncoder().encode(String(value || ""));
+    bytes.forEach((byte) => {
+      h ^= BigInt(byte);
+      h = (h * prime) & mask;
+    });
+    return h.toString(16).padStart(16, "0");
+  }
+
+  function tokenIdFor(sentenceId, wordGroupIndex, tokenIndex, token) {
+    const safeToken = token && typeof token === "object" ? token : {};
+    const seed = {
+      sentenceId: String(sentenceId || ""),
+      wordGroupIndex: Number.isInteger(wordGroupIndex) ? wordGroupIndex : Number(wordGroupIndex) || 0,
+      tokenIndex: Number.isInteger(tokenIndex) ? tokenIndex : Number(tokenIndex) || 0,
+      text: String(safeToken.text || ""),
+      phonetic: Array.isArray(safeToken.phonetic) ? safeToken.phonetic : [],
+      kkPhonetic: String(safeToken.kkPhonetic || ""),
+    };
+    const encoded = JSON.stringify(seed);
+    return `tok_${stableHash16(encoded)}`;
+  }
+
+  function finalizeJasonToken(sentenceId, wordGroupIndex, tokenIndex, token) {
+    const safeToken = token && typeof token === "object" ? token : {};
+    safeToken.text = String(safeToken.text || "");
+    if (!Array.isArray(safeToken.phonetic)) {
+      safeToken.phonetic = [];
+    }
+    safeToken.toneLevel = 0;
+    safeToken.toneStyle = "solid-short";
+    safeToken.importance = safeToken.phonetic.length > 0 ? "important" : "not-important";
+    safeToken.tokenId = tokenIdFor(sentenceId, wordGroupIndex, tokenIndex, safeToken);
+    return safeToken;
+  }
+
   function blankJasonToken(text) {
     return {
       tokenId: "",
       text: String(text || ""),
-      toneLevel: null,
-      toneStyle: null,
+      toneLevel: 0,
+      toneStyle: "solid-short",
       phonetic: [],
-      importance: null,
+      importance: "not-important",
       reason: "",
       kkPhonetic: "",
       partOfSpeech: null,
@@ -1116,6 +1286,17 @@
     const details = Array.isArray(word?.token_details) ? word.token_details : [];
     const fallbackSyllableCount = fallbackSyllableCountForWord(word, surfaceText);
     const kkPhonetic = tokenKkPhonetic(word);
+
+    const manualRows = buildManualPhoneticRows(word, surfaceText, phoneticNumberTable, sortedSymbols);
+    if (manualRows.length > 0) {
+      return manualRows.map((row, idx) => {
+        const token = blankJasonToken(String(row.text || (idx === 0 ? surfaceText : "")));
+        token.phonetic = Array.isArray(row.phonetic) ? row.phonetic : [];
+        token.kkPhonetic = kkPhonetic;
+        return token;
+      });
+    }
+
     const phoneticRows = buildPhoneticRows(
       zhuyinTokens,
       details,
@@ -1130,10 +1311,11 @@
       return [token];
     }
 
+    const splitTexts = splitSurfaceTextForRows(surfaceText, phoneticRows.length);
     return phoneticRows.map((row, idx) => {
-      const token = blankJasonToken(idx === 0 ? surfaceText : "");
+      const token = blankJasonToken(splitTexts[idx] || (idx === 0 ? surfaceText : ""));
       token.phonetic = row;
-      token.kkPhonetic = idx === 0 ? kkPhonetic : "";
+      token.kkPhonetic = kkPhonetic;
       return token;
     });
   }
@@ -1153,6 +1335,7 @@
 
   function convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols) {
     const sentenceText = String(sentence?.text || sentence?.sentence || "");
+    const sentenceId = String(sentence?.sentence_id || sentence?.sentenceId || "");
     const surfaceTokens = sentenceSurfaceTokens(sentenceText);
     const sourceWords = sentenceWords(sentence);
     const words = [];
@@ -1180,8 +1363,20 @@
       );
     }
 
+    words.forEach((wordGroup, wordGroupIndex) => {
+      if (!Array.isArray(wordGroup)) {
+        return;
+      }
+      wordGroup.forEach((token, tokenIndex) => {
+        if (!token || typeof token !== "object") {
+          return;
+        }
+        wordGroup[tokenIndex] = finalizeJasonToken(sentenceId, wordGroupIndex, tokenIndex, token);
+      });
+    });
+
     return {
-      sentenceId: String(sentence?.sentence_id || sentence?.sentenceId || ""),
+      sentenceId,
       sentence: sentenceText,
       words,
       tags: Array.isArray(sentence?.tags) ? sentence.tags : [],
