@@ -104,8 +104,25 @@ class PipelineTest(unittest.TestCase):
         }
 
         exported = pipeline.export_json(payload)
-        token = exported[0]["words"][0][0]
-        self.assertEqual(token["phonetic"], [[1, 13], [43, 2]])
+        word_group = exported[0]["words"][0]
+        self.assertEqual(len(word_group), 2)
+        self.assertEqual(word_group[0]["text"], "blorp")
+        self.assertEqual(word_group[0]["phonetic"], [1, 13])
+        self.assertEqual(word_group[1]["text"], "")
+        self.assertEqual(word_group[1]["phonetic"], [43, 2])
+
+    def test_export_json_splits_multisyllable_word_into_parallel_tokens(self):
+        payload = pipeline.process_text("banana.", "unit")
+        exported = pipeline.export_json(payload)
+        word_group = exported[0]["words"][0]
+
+        self.assertEqual(len(word_group), 3)
+        self.assertEqual(word_group[0]["text"], "banana.")
+        self.assertEqual(word_group[1]["text"], "")
+        self.assertEqual(word_group[2]["text"], "")
+        self.assertEqual(word_group[0]["phonetic"], [1, 44])
+        self.assertEqual(word_group[1]["phonetic"], [12, 49])
+        self.assertEqual(word_group[2]["phonetic"], [12, 44])
 
 
 if __name__ == "__main__":

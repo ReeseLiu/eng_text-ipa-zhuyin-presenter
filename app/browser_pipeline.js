@@ -1002,7 +1002,7 @@
     return Array.isArray(segmented) ? segmented : [];
   }
 
-  function buildPhoneticSlots(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols, fallbackSyllableCount = null) {
+  function buildPhoneticRows(displayZhuyinTokens, tokenDetails, phoneticNumberTable, sortedSymbols, fallbackSyllableCount = null) {
     const tokens = Array.isArray(displayZhuyinTokens)
       ? displayZhuyinTokens.map((token) => String(token || "").trim())
       : [];
@@ -1011,7 +1011,7 @@
     }
 
     if (!Array.isArray(tokenDetails) || tokenDetails.length !== tokens.length) {
-      const fallback = [];
+      const fallbackRows = [];
       const grouped = groupTokensBySyllable(tokens, fallbackSyllableCount);
       grouped.forEach((group) => {
         const groupNumbers = [];
@@ -1025,9 +1025,9 @@
         if (groupNumbers.length === 0) {
           return;
         }
-        fallback.push(groupNumbers.length > 1 ? groupNumbers : groupNumbers[0]);
+        fallbackRows.push(groupNumbers);
       });
-      return fallback;
+      return fallbackRows;
     }
 
     const syllableMap = new Map();
@@ -1062,10 +1062,11 @@
       bucket[slot].push(...numbers);
     });
 
-    const output = [];
+    const outputRows = [];
     const indices = Array.from(syllableMap.keys()).sort((a, b) => a - b);
     indices.forEach((syllableIndex) => {
       const bucket = syllableMap.get(syllableIndex);
+      const row = [];
       JASON_SLOT_ORDER.forEach((slot) => {
         const numbers = Array.isArray(bucket?.[slot]) ? bucket[slot] : [];
         if (numbers.length === 0) {
@@ -1073,11 +1074,15 @@
         }
         const compositeSlot = (slot === "C1" || slot === "C2")
           && Number(slotCounts.get(syllableIndex)?.[slot] || 0) > 1;
-        output.push(numbers.length > 1 || compositeSlot ? numbers : numbers[0]);
+        row.push(numbers.length > 1 || compositeSlot ? numbers : numbers[0]);
       });
+
+      if (row.length > 0) {
+        outputRows.push(row);
+      }
     });
 
-    return output;
+    return outputRows;
   }
 
   function tokenKkPhonetic(word) {
@@ -1105,21 +1110,32 @@
     };
   }
 
-  function wordToJasonToken(word, surfaceText, phoneticNumberTable, sortedSymbols) {
-    const token = blankJasonToken(surfaceText);
+  function wordToJasonTokens(word, surfaceText, phoneticNumberTable, sortedSymbols) {
     const display = word?.display && typeof word.display === "object" ? word.display : {};
     const zhuyinTokens = Array.isArray(display.zhuyin_plus) ? display.zhuyin_plus : [];
     const details = Array.isArray(word?.token_details) ? word.token_details : [];
     const fallbackSyllableCount = fallbackSyllableCountForWord(word, surfaceText);
-    token.phonetic = buildPhoneticSlots(
+    const kkPhonetic = tokenKkPhonetic(word);
+    const phoneticRows = buildPhoneticRows(
       zhuyinTokens,
       details,
       phoneticNumberTable,
       sortedSymbols,
       fallbackSyllableCount,
     );
-    token.kkPhonetic = tokenKkPhonetic(word);
-    return token;
+
+    if (phoneticRows.length === 0) {
+      const token = blankJasonToken(surfaceText);
+      token.kkPhonetic = kkPhonetic;
+      return [token];
+    }
+
+    return phoneticRows.map((row, idx) => {
+      const token = blankJasonToken(idx === 0 ? surfaceText : "");
+      token.phonetic = row;
+      token.kkPhonetic = idx === 0 ? kkPhonetic : "";
+      return token;
+    });
   }
 
   function sentenceSurfaceTokens(sentenceText) {
@@ -1144,7 +1160,7 @@
 
     surfaceTokens.forEach((rawToken) => {
       if (normalizeWordToken(rawToken) && sourceIdx < sourceWords.length) {
-        words.push([wordToJasonToken(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols)]);
+        words.push(wordToJasonTokens(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols));
         sourceIdx += 1;
         return;
       }
@@ -1154,14 +1170,14 @@
     while (sourceIdx < sourceWords.length) {
       const fallbackWord = sourceWords[sourceIdx];
       sourceIdx += 1;
-      words.push([
-        wordToJasonToken(
+      words.push(
+        wordToJasonTokens(
           fallbackWord,
           String(fallbackWord?.word || ""),
           phoneticNumberTable,
           sortedSymbols,
         ),
-      ]);
+      );
     }
 
     return {

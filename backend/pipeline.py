@@ -178,19 +178,19 @@ def _parse_zhuyin_numbers(token: str, phonetic_number_map: dict[str, int], sorte
     return segmented if segmented is not None else []
 
 
-def _build_phonetic_slots(
+def _build_phonetic_rows(
     display_zhuyin_tokens: list[str],
     token_details: list[dict],
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
     fallback_syllable_count: int | None = None,
-) -> list[Any]:
+) -> list[list[Any]]:
     tokens = [str(token or "").strip() for token in display_zhuyin_tokens]
     if not tokens:
         return []
 
     if len(tokens) != len(token_details):
-        fallback: list[Any] = []
+        fallback_rows: list[list[Any]] = []
         for group in _group_tokens_by_syllable(tokens, fallback_syllable_count):
             group_numbers: list[int] = []
             for token in group:
@@ -200,8 +200,8 @@ def _build_phonetic_slots(
                 group_numbers.extend(numbers)
             if not group_numbers:
                 continue
-            fallback.append(group_numbers if len(group_numbers) > 1 else group_numbers[0])
-        return fallback
+            fallback_rows.append(group_numbers)
+        return fallback_rows
 
     syllable_map: dict[int, dict[str, list[int]]] = {}
     slot_counts: dict[int, dict[str, int]] = {}
@@ -225,20 +225,24 @@ def _build_phonetic_slots(
         bucket = syllable_map.setdefault(syllable_index, {"C1": [], "V": [], "C2": []})
         bucket[slot].extend(numbers)
 
-    output: list[Any] = []
+    output_rows: list[list[Any]] = []
     for syllable_index in sorted(syllable_map.keys()):
         bucket = syllable_map[syllable_index]
+        row: list[Any] = []
         for slot in JASON_SLOT_ORDER:
             numbers = bucket[slot]
             if not numbers:
                 continue
             is_composite_slot = slot in {"C1", "C2"} and slot_counts.get(syllable_index, {}).get(slot, 0) > 1
             if len(numbers) > 1 or is_composite_slot:
-                output.append(numbers)
+                row.append(numbers)
             else:
-                output.append(numbers[0])
+                row.append(numbers[0])
 
-    return output
+        if row:
+            output_rows.append(row)
+
+    return output_rows
 
 
 def _token_kk_phonetic(word: dict[str, Any]) -> str:
@@ -269,29 +273,40 @@ def _blank_jason_token(text: str) -> dict[str, Any]:
     }
 
 
-def _word_to_jason_token(
+def _word_to_jason_tokens(
     word: dict[str, Any],
     surface_text: str,
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
-) -> dict[str, Any]:
-    token = _blank_jason_token(surface_text)
+) -> list[dict[str, Any]]:
     display = word.get("display") if isinstance(word, dict) else {}
     display_zhuyin = display.get("zhuyin_plus") if isinstance(display, dict) else []
     zhuyin_tokens = display_zhuyin if isinstance(display_zhuyin, list) else []
     token_details = word.get("token_details") if isinstance(word, dict) else []
     details = token_details if isinstance(token_details, list) else []
     fallback_syllable_count = _fallback_syllable_count_for_word(word, surface_text)
+    kk_phonetic = _token_kk_phonetic(word)
 
-    token["phonetic"] = _build_phonetic_slots(
+    phonetic_rows = _build_phonetic_rows(
         zhuyin_tokens,
         details,
         phonetic_number_map,
         sorted_symbols,
         fallback_syllable_count=fallback_syllable_count,
     )
-    token["kkPhonetic"] = _token_kk_phonetic(word)
-    return token
+
+    if not phonetic_rows:
+        token = _blank_jason_token(surface_text)
+        token["kkPhonetic"] = kk_phonetic
+        return [token]
+
+    tokens: list[dict[str, Any]] = []
+    for idx, row in enumerate(phonetic_rows):
+        token = _blank_jason_token(surface_text if idx == 0 else "")
+        token["phonetic"] = row
+        token["kkPhonetic"] = kk_phonetic if idx == 0 else ""
+        tokens.append(token)
+    return tokens
 
 
 def _sentence_surface_tokens(sentence_text: str) -> list[str]:
@@ -321,7 +336,7 @@ def _convert_sentence_to_jason(
     words_output: list[list[dict[str, Any]]] = []
     for raw_token in surface_tokens:
         if normalize_word_token(raw_token) and source_idx < len(source_words):
-            words_output.append([_word_to_jason_token(source_words[source_idx], raw_token, phonetic_number_map, sorted_symbols)])
+            words_output.append(_word_to_jason_tokens(source_words[source_idx], raw_token, phonetic_number_map, sorted_symbols))
             source_idx += 1
         else:
             words_output.append([_blank_jason_token(raw_token)])
@@ -329,14 +344,14 @@ def _convert_sentence_to_jason(
     while source_idx < len(source_words):
         fallback_word = source_words[source_idx]
         source_idx += 1
-        words_output.append([
-            _word_to_jason_token(
+        words_output.append(
+            _word_to_jason_tokens(
                 fallback_word,
                 str(fallback_word.get("word") or ""),
                 phonetic_number_map,
                 sorted_symbols,
             )
-        ])
+        )
 
     tags = sentence.get("tags")
     return {
