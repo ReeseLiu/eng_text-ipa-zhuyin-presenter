@@ -777,8 +777,16 @@ class Pipeline:
         if not normalized:
             return []
 
-        parts = re.findall(r"[^.!?。！？\n]+(?:[.!?。！？]+|$)", normalized)
-        sentences = [re.sub(r"\s+", " ", part).strip() for part in parts if part.strip()]
+        sentences: list[str] = []
+        for line in normalized.split("\n"):
+            line_text = line.strip()
+            if not line_text:
+                continue
+            parts = re.findall(r"[^.!?。！？]+(?:[.!?。！？]+|$)", line_text)
+            for part in parts:
+                cleaned = re.sub(r"\s+", " ", part).strip()
+                if cleaned:
+                    sentences.append(cleaned)
         return sentences
 
     def process_text(self, text: str, source: str | None = None) -> dict[str, Any]:

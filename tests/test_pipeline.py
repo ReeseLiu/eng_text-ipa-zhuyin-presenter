@@ -12,6 +12,18 @@ class PipelineTest(unittest.TestCase):
             ["We read.", "They listen!"],
         )
 
+    def test_split_sentences_treats_newline_as_boundary(self):
+        self.assertEqual(
+            pipeline.split_sentences("first line\nsecond line\nthird line"),
+            ["first line", "second line", "third line"],
+        )
+
+    def test_split_sentences_mixed_punctuation_and_newline(self):
+        self.assertEqual(
+            pipeline.split_sentences("first line.\nsecond line\nthird line!"),
+            ["first line.", "second line", "third line!"],
+        )
+
     def test_process_text_shape(self):
         result = pipeline.process_text("We read the text.", "unit")
         self.assertEqual(result["schema_version"], "0.1.0")

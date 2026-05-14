@@ -1642,8 +1642,23 @@
       if (!normalized) {
         return [];
       }
-      const parts = normalized.match(/[^.!?。！？\n]+(?:[.!?。！？]+|$)/g) || [];
-      return parts.map((part) => String(part || "").replace(/\s+/g, " ").trim()).filter((part) => part);
+
+      const sentences = [];
+      normalized.split("\n").forEach((lineRaw) => {
+        const line = String(lineRaw || "").trim();
+        if (!line) {
+          return;
+        }
+        const parts = line.match(/[^.!?。！？]+(?:[.!?。！？]+|$)/g) || [];
+        parts.forEach((partRaw) => {
+          const part = String(partRaw || "").replace(/\s+/g, " ").trim();
+          if (part) {
+            sentences.push(part);
+          }
+        });
+      });
+
+      return sentences;
     }
 
     processText(text, source = "inline") {
