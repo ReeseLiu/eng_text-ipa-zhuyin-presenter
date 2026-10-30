@@ -49,6 +49,27 @@ Notes:
 - Enter presentation mode and use left/right arrow keys to change sentences.
 - Use `匯出 JSON` for the draft JSON export payload.
 
+## Syllable-Split Suggestions
+
+In edit mode, `建議切分` previews spelling cut points for a multi-syllable word based on its current IPA (see `docs/adr/0001-*.md`, `docs/adr/0002-*.md`). Nothing is written until `套用建議` is clicked, which stores the segments in `manual_syllables`. When the aligner is unsure it reports a failure code (`oov`, `pron_mismatch`, `no_alignment`, `cut_inside_chunk`, `low_confidence`, `reconstruct`) instead of guessing.
+
+The grapheme–phoneme chunks come from an offline, constrained aligner over CMUdict:
+
+```bash
+python scripts/build_align_table.py          # writes data/syllable_align_table.json + app/browser_align.js
+python scripts/build_align_table.py --check  # verifies both match data/cmudict.dict and the aligner version
+```
+
+Rebuild after changing `data/cmudict.dict` or the aligner. The browser loads `app/browser_align.js` only on the first suggestion request.
+
+Tests (Python + Node parity on the shared fixtures in `tests/fixtures/syllable_split_cases.json`, plus `tests/js/app_flow_test.js`, which loads `app/app.js` in a minimal fake DOM). Node must be on `PATH` (no npm packages needed); without it the JS contract tests fail rather than skip:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+CI runs the same command in `.github/workflows/tests.yml` (pushes and pull requests) and before the Pages build in `.github/workflows/pages.yml`.
+
 ## Offline Notes
 
 The MVP bundles these runtime resources under `data/`:
@@ -77,6 +98,7 @@ What it does:
 - `app/app.js`
 - `app/browser_pipeline.js`
 - `app/browser_data.js`
+- `app/browser_align.js`
 - `app/styles.css`
 
 Security notes for Pages:

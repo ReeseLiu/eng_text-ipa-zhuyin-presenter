@@ -196,6 +196,21 @@
     "s j",
     "s l",
     "s ɹ",
+    "ʃ ɹ",
+    "k w",
+    "t w",
+    "d w",
+    "ɡ w",
+    "θ w",
+    // Coronal + /j/ (tj, dj, nj, lj) is deliberately excluded; keep in sync with syllable_structure.py.
+    "p j",
+    "b j",
+    "k j",
+    "ɡ j",
+    "f j",
+    "v j",
+    "m j",
+    "h j",
   ]);
 
   const LEGAL_ONSET_CLUSTERS_3 = new Set([
@@ -206,6 +221,8 @@
     "s k l",
     "s k w",
     "s t j",
+    "s k j",
+    "s p j",
   ]);
 
   const FALLBACK_BASE_MAP = {
@@ -761,6 +778,136 @@
     }
 
     return annotations;
+  }
+
+  // Mirrors backend/phoneme_core/syllable_split.py; locked by tests/fixtures/syllable_split_cases.json.
+  const SYLLABLE_SPLIT_SURFACE_RE = /^([A-Za-z'\-]+)([.,!?;:…]*)$/;
+
+  function syllableSplitFailure(code) {
+    return { status: "failed", code, segments: [] };
+  }
+
+  function syllableStartsForSplit(ipaTokens) {
+    const starts = [];
+    let previous = 0;
+    analyzeSyllableTokens(ipaTokens).forEach((detail) => {
+      const syllableIndex = Number(detail.syllable_index) || 0;
+      if (syllableIndex !== previous) {
+        starts.push(Number(detail.index));
+        previous = syllableIndex;
+      }
+    });
+    return starts;
+  }
+
+  function syllableCountForSplit(ipaTokens) {
+    const details = analyzeSyllableTokens(ipaTokens);
+    if (!details.some((detail) => detail.syllable_slot === "V")) {
+      return 0;
+    }
+    return new Set(details.map((detail) => Number(detail.syllable_index) || 0)).size;
+  }
+
+  function parseAlignEntry(raw, chunkCodes) {
+    const tildeAt = raw.indexOf("~");
+    const body = tildeAt >= 0 ? raw.slice(0, tildeAt) : raw;
+    const lowRaw = tildeAt >= 0 ? raw.slice(tildeAt + 1) : "";
+    const chunks = [];
+    for (const code of body) {
+      const shape = chunkCodes[code];
+      if (!Array.isArray(shape)) {
+        return null;
+      }
+      chunks.push([Number(shape[0]), Number(shape[1])]);
+    }
+    const low = new Set(
+      lowRaw.split(",").filter((part) => /^\d+$/.test(part.trim())).map((part) => Number(part.trim())),
+    );
+    return { chunks, low };
+  }
+
+  function suggestSyllableSplit(wordText, ipaTokens, pronunciations, table) {
+    const tokens = (Array.isArray(ipaTokens) ? ipaTokens : [])
+      .map((token) => String(token ?? "").trim())
+      .filter((token) => token);
+    if (syllableCountForSplit(tokens) < 2) {
+      return { status: "not_applicable", code: null, segments: [] };
+    }
+
+    const matched = String(wordText || "").trim().match(SYLLABLE_SPLIT_SURFACE_RE);
+    if (!matched) {
+      return syllableSplitFailure("oov");
+    }
+    const [, core, punct] = matched;
+    const key = core.toLowerCase();
+
+    const prons = pronunciations(key);
+    if (!Array.isArray(prons) || prons.length === 0) {
+      return syllableSplitFailure("oov");
+    }
+
+    const target = tokens.join(" ");
+    const pronIndex = prons.findIndex((pron) => Array.isArray(pron) && pron.join(" ") === target);
+    if (pronIndex < 0) {
+      return syllableSplitFailure("pron_mismatch");
+    }
+
+    const entries = table && typeof table.entries === "object" && table.entries ? table.entries : {};
+    const rawEntry = Object.prototype.hasOwnProperty.call(entries, key) ? entries[key] : null;
+    const codes = typeof rawEntry === "string" ? rawEntry.split("|") : [];
+    if (pronIndex >= codes.length || ["", ".", "-"].includes(codes[pronIndex])) {
+      return syllableSplitFailure("no_alignment");
+    }
+    const parsed = parseAlignEntry(codes[pronIndex], (table && table.chunk_codes) || {});
+    if (!parsed) {
+      return syllableSplitFailure("no_alignment");
+    }
+    const { chunks, low } = parsed;
+    const letterTotal = chunks.reduce((sum, [n]) => sum + n, 0);
+    const phoneTotal = chunks.reduce((sum, [, p]) => sum + p, 0);
+    if (letterTotal !== core.length || phoneTotal !== tokens.length) {
+      return syllableSplitFailure("no_alignment");
+    }
+
+    const chunkStartAt = new Map();
+    const inside = new Set();
+    let letter = 0;
+    let phone = 0;
+    chunks.forEach(([nLetters, nPhones]) => {
+      if (nPhones > 0) {
+        chunkStartAt.set(phone, letter);
+        for (let k = phone + 1; k < phone + nPhones; k += 1) {
+          inside.add(k);
+        }
+      }
+      letter += nLetters;
+      phone += nPhones;
+    });
+
+    const cuts = [];
+    for (const start of syllableStartsForSplit(tokens)) {
+      if (inside.has(start) || !chunkStartAt.has(start)) {
+        return syllableSplitFailure("cut_inside_chunk");
+      }
+      if (low.has(start)) {
+        return syllableSplitFailure("low_confidence");
+      }
+      cuts.push(chunkStartAt.get(start));
+    }
+
+    const bounds = [0, ...cuts, core.length];
+    const segments = [];
+    for (let i = 0; i < bounds.length - 1; i += 1) {
+      segments.push(core.slice(bounds[i], bounds[i + 1]));
+    }
+    const sorted = bounds.every((value, idx) => idx === 0 || bounds[idx - 1] <= value);
+    if (!sorted || segments.some((segment) => !segment) || segments.join("") !== core) {
+      return syllableSplitFailure("reconstruct");
+    }
+    if (punct) {
+      segments[segments.length - 1] += punct;
+    }
+    return { status: "ok", code: null, segments };
   }
 
   function normalizeStressLevel(value) {
@@ -1633,6 +1780,7 @@
         return left.localeCompare(right);
       });
       this.displayExceptions = loadDisplayExceptionsJson(safeData.display_exceptions || {});
+      this.alignTable = safeData.align_table && typeof safeData.align_table === "object" ? safeData.align_table : null;
     }
 
     splitSentences(text) {
@@ -1723,6 +1871,72 @@
         display,
         token_details: tokenDetails,
       };
+    }
+
+    hasAlignTable() {
+      return Boolean(this.alignTable || window.BROWSER_ALIGN_TABLE);
+    }
+
+    setAlignTable(table) {
+      this.alignTable = table && typeof table === "object" ? table : null;
+    }
+
+    cmudictIpaPronunciations(word) {
+      const prons = this.g2p.dict[word];
+      if (!Array.isArray(prons) || prons.length === 0) {
+        return null;
+      }
+      return prons.map((phones) => this.g2p.arpabetToIpaWithStress(phones)[0]);
+    }
+
+    // Suggests spelling segments for the word's current IPA; never writes manual_syllables.
+    // Throws an error with code "bad_request" for the same inputs Pipeline.suggest_syllable_split rejects.
+    suggestSyllableSplit(wordText, ipaTokens) {
+      let invalid = "";
+      if (typeof wordText !== "string") {
+        invalid = "word must be a string";
+      } else if (Array.isArray(ipaTokens)) {
+        if (!ipaTokens.every((token) => typeof token === "string")) {
+          invalid = "ipa list items must be strings";
+        }
+      } else if (typeof ipaTokens !== "string") {
+        invalid = "ipa must be a list of strings or a string";
+      }
+      if (invalid) {
+        const error = new Error(invalid);
+        error.code = "bad_request";
+        throw error;
+      }
+      const table = this.alignTable || window.BROWSER_ALIGN_TABLE;
+      if (!table) {
+        throw new Error("音節切分對照表尚未載入（browser_align.js）");
+      }
+      return suggestSyllableSplit(
+        wordText,
+        normalizeIpaTokens(ipaTokens),
+        (word) => this.cmudictIpaPronunciations(word),
+        table,
+      );
+    }
+
+    // Route-level entry for /api/suggest_syllable_split, matching server.py: the body must be
+    // an object with both "word" and "ipa" keys, otherwise bad_request (HTTP 400 on the server).
+    suggestSyllableSplitRequest(body) {
+      let invalid = "";
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        invalid = "JSON body must be an object";
+      } else {
+        const missing = ["word", "ipa"].filter((name) => !Object.prototype.hasOwnProperty.call(body, name));
+        if (missing.length) {
+          invalid = `${missing.join(" and ")} is required`;
+        }
+      }
+      if (invalid) {
+        const error = new Error(invalid);
+        error.code = "bad_request";
+        throw error;
+      }
+      return this.suggestSyllableSplit(body.word, body.ipa);
     }
 
     exportJson(payload) {

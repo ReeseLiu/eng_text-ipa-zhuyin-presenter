@@ -27,8 +27,20 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Build browser assets
         run: python scripts/build_browser_assets.py
+
+      - name: Verify syllable alignment table
+        run: python scripts/build_align_table.py --check
+
+      # Includes the Py/JS contract tests and the app.js flow test; they fail (not skip) without Node.
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
 
       - name: Build Pages dist
         run: python scripts/build_pages_dist.py

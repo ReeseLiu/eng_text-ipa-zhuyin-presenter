@@ -1,0 +1,426 @@
+{
+  "version": 1,
+  "description": "Contract cases for syllable-split suggestions; run by tests/test_syllable_split.py against both backend/phoneme_core/syllable_split.py and app/browser_pipeline.js.",
+  "cases": [
+    {
+      "id": "kw_onset_headquarters",
+      "word": "headquarters",
+      "ipa": [
+        "h",
+        "ɛ",
+        "d",
+        "k",
+        "w",
+        "ɔ",
+        "ɹ",
+        "t",
+        "ɚ",
+        "z"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "head",
+          "quar",
+          "ters"
+        ]
+      },
+      "note": "/kw/ onset puts the cut before q"
+    },
+    {
+      "id": "surface_case_and_punct",
+      "word": "Headquarters,",
+      "ipa": [
+        "h",
+        "ɛ",
+        "d",
+        "k",
+        "w",
+        "ɔ",
+        "ɹ",
+        "t",
+        "ɚ",
+        "z"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "Head",
+          "quar",
+          "ters,"
+        ]
+      },
+      "note": "case preserved; trailing punctuation stays on the last segment"
+    },
+    {
+      "id": "second_pron_selected",
+      "word": "headquarters",
+      "ipa": [
+        "h",
+        "ɛ",
+        "d",
+        "k",
+        "ɔ",
+        "ɹ",
+        "t",
+        "ɚ",
+        "z"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "head",
+          "quar",
+          "ters"
+        ]
+      },
+      "note": "aligns against the second CMUdict pronunciation"
+    },
+    {
+      "id": "doubled_consonant_chunks",
+      "word": "accommodation",
+      "ipa": [
+        "ə",
+        "k",
+        "ɑ",
+        "m",
+        "ə",
+        "d",
+        "eɪ",
+        "ʃ",
+        "ə",
+        "n"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "a",
+          "cco",
+          "mmo",
+          "da",
+          "tion"
+        ]
+      },
+      "note": "cc and mm stay whole and open the next syllable"
+    },
+    {
+      "id": "mj_onset",
+      "word": "communication",
+      "ipa": [
+        "k",
+        "ə",
+        "m",
+        "j",
+        "u",
+        "n",
+        "ə",
+        "k",
+        "eɪ",
+        "ʃ",
+        "ə",
+        "n"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "co",
+          "mmu",
+          "ni",
+          "ca",
+          "tion"
+        ]
+      },
+      "note": "/mj/ onset keeps u->ju inside one syllable"
+    },
+    {
+      "id": "silent_e_left",
+      "word": "something",
+      "ipa": [
+        "s",
+        "ʌ",
+        "m",
+        "θ",
+        "ɪ",
+        "ŋ"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "some",
+          "thing"
+        ]
+      },
+      "note": "silent e stays with the left syllable"
+    },
+    {
+      "id": "silent_letters_left",
+      "word": "knowledge",
+      "ipa": [
+        "n",
+        "ɑ",
+        "l",
+        "ə",
+        "dʒ"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "know",
+          "ledge"
+        ]
+      },
+      "note": "silent w stays left"
+    },
+    {
+      "id": "doubled_consonant_before_le",
+      "word": "little",
+      "ipa": [
+        "l",
+        "ɪ",
+        "t",
+        "ə",
+        "l"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "li",
+          "ttle"
+        ]
+      },
+      "note": "tt is one chunk; l -> ə l"
+    },
+    {
+      "id": "doubled_consonant_split_by_sound",
+      "word": "bookkeeper",
+      "ipa": [
+        "b",
+        "ʊ",
+        "k",
+        "k",
+        "i",
+        "p",
+        "ɚ"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "book",
+          "kee",
+          "per"
+        ]
+      },
+      "note": "kk pronounced twice is two 1->1 chunks"
+    },
+    {
+      "id": "pr_onset",
+      "word": "temperature",
+      "ipa": [
+        "t",
+        "ɛ",
+        "m",
+        "p",
+        "ɹ",
+        "ə",
+        "tʃ",
+        "ɚ"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "tem",
+          "pera",
+          "ture"
+        ]
+      }
+    },
+    {
+      "id": "current_ipa_only_a",
+      "word": "every",
+      "ipa": [
+        "ɛ",
+        "v",
+        "ɚ",
+        "i"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "e",
+          "ver",
+          "y"
+        ]
+      },
+      "note": "three-syllable pronunciation"
+    },
+    {
+      "id": "current_ipa_only_b",
+      "word": "every",
+      "ipa": [
+        "ɛ",
+        "v",
+        "ɹ",
+        "i"
+      ],
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "segments": [
+          "eve",
+          "ry"
+        ]
+      },
+      "note": "two-syllable pronunciation of the same word"
+    },
+    {
+      "id": "single_syllable",
+      "word": "cat",
+      "ipa": [
+        "k",
+        "æ",
+        "t"
+      ],
+      "expected": {
+        "status": "not_applicable",
+        "code": null,
+        "segments": []
+      },
+      "note": "single syllable is not applicable"
+    },
+    {
+      "id": "empty_ipa",
+      "word": "cat",
+      "ipa": [],
+      "expected": {
+        "status": "not_applicable",
+        "code": null,
+        "segments": []
+      },
+      "note": "no IPA, nothing to split"
+    },
+    {
+      "id": "oov_word",
+      "word": "blorptastic",
+      "ipa": [
+        "b",
+        "l",
+        "ɔ",
+        "ɹ",
+        "p",
+        "t",
+        "æ",
+        "s",
+        "t",
+        "ɪ",
+        "k"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "oov",
+        "segments": []
+      },
+      "note": "not in CMUdict"
+    },
+    {
+      "id": "oov_surface",
+      "word": "abc123",
+      "ipa": [
+        "eɪ",
+        "b",
+        "i",
+        "s",
+        "i"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "oov",
+        "segments": []
+      },
+      "note": "surface is not a plain spelled word"
+    },
+    {
+      "id": "pron_mismatch",
+      "word": "banana",
+      "ipa": [
+        "b",
+        "ə",
+        "n",
+        "ɑ",
+        "n",
+        "ə"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "pron_mismatch",
+        "segments": []
+      },
+      "note": "edited IPA matches no CMUdict pronunciation"
+    },
+    {
+      "id": "no_alignment",
+      "word": "february",
+      "ipa": [
+        "f",
+        "ɛ",
+        "b",
+        "j",
+        "ə",
+        "w",
+        "ɛ",
+        "ɹ",
+        "i"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "no_alignment",
+        "segments": []
+      },
+      "note": "letters cannot cover /j ə w/ under the constrained aligner"
+    },
+    {
+      "id": "cut_inside_chunk",
+      "word": "extra",
+      "ipa": [
+        "ɛ",
+        "k",
+        "s",
+        "t",
+        "ɹ",
+        "ə"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "cut_inside_chunk",
+        "segments": []
+      },
+      "note": "x -> k s spans the syllable boundary"
+    },
+    {
+      "id": "low_confidence",
+      "word": "badger",
+      "ipa": [
+        "b",
+        "æ",
+        "dʒ",
+        "ɚ"
+      ],
+      "expected": {
+        "status": "failed",
+        "code": "low_confidence",
+        "segments": []
+      },
+      "note": "bad|ger vs ba|dger is too close to call"
+    }
+  ]
+}

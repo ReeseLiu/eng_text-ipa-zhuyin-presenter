@@ -14,6 +14,7 @@ from .phoneme_core.display_mapping import (
     load_display_table_csv,
 )
 from .phoneme_core.g2p import MULTI_PHONEME_UNITS, SimpleG2P, sentence_to_canonical_words
+from .phoneme_core.syllable_split import load_align_table, suggest_syllable_split
 from .phoneme_core.syllable_structure import analyze_syllable_tokens
 from .phoneme_core.text_utils import normalize_word_token
 
@@ -25,6 +26,7 @@ DISPLAY_TABLE_PATH = DATA_DIR / "display_mapping_table_syllable.csv"
 DISPLAY_EXCEPTIONS_PATH = DATA_DIR / "display_mapping_exceptions.json"
 PHONETIC_NUMBER_TABLE_PATH = DATA_DIR / "display_mapping_table_phonetic_number.csv"
 CMUDICT_PATH = DATA_DIR / "cmudict.dict"
+ALIGN_TABLE_PATH = DATA_DIR / "syllable_align_table.json"
 JASON_SLOT_ORDER = ("C1", "V", "C2")
 WORD_SEGMENT_HINTS: dict[str, list[str]] = {
     "sometimes": ["some", "times"],
@@ -769,6 +771,7 @@ class Pipeline:
         self.display_table = load_display_table_csv(DISPLAY_TABLE_PATH)
         self.display_exceptions = load_display_exceptions_json(DISPLAY_EXCEPTIONS_PATH)
         self.phonetic_number_map, self.phonetic_number_symbols = load_phonetic_number_table_csv(PHONETIC_NUMBER_TABLE_PATH)
+        self._align_table: dict[str, Any] | None = None
 
     def split_sentences(self, text: str) -> list[str]:
         normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -851,6 +854,35 @@ class Pipeline:
             "display": display,
             "token_details": token_details,
         }
+
+    def _cmudict_ipa_pronunciations(self, word: str) -> list[list[str]] | None:
+        prons = self.g2p._dict.get(word)
+        if not prons:
+            return None
+        return [self.g2p._arpabet_to_ipa_with_stress(phones)[0] for phones in prons]
+
+    def suggest_syllable_split(self, word_text: Any, ipa_tokens: Any) -> dict[str, Any]:
+        """Suggest spelling segments for the word's current IPA; never writes manual_syllables.
+
+        Raises ValueError unless ``word_text`` is a string and ``ipa_tokens`` is a
+        string or a list of strings; ``BrowserPipeline.suggestSyllableSplit``
+        rejects exactly the same inputs.
+        """
+        if not isinstance(word_text, str):
+            raise ValueError("word must be a string")
+        if isinstance(ipa_tokens, list):
+            if not all(isinstance(token, str) for token in ipa_tokens):
+                raise ValueError("ipa list items must be strings")
+        elif not isinstance(ipa_tokens, str):
+            raise ValueError("ipa must be a list of strings or a string")
+        if self._align_table is None:
+            self._align_table = load_align_table(ALIGN_TABLE_PATH)
+        return suggest_syllable_split(
+            word_text,
+            normalize_ipa_tokens(ipa_tokens),
+            self._cmudict_ipa_pronunciations,
+            self._align_table,
+        )
 
     def export_json(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         body = payload if isinstance(payload, dict) else {}

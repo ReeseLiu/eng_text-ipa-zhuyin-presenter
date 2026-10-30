@@ -39,6 +39,7 @@ class PresenterHandler(BaseHTTPRequestHandler):
             "/api/reprocess_word": self._api_reprocess_word,
             "/api/display_for_ipa": self._api_display_for_ipa,
             "/api/export_json": self._api_export_json,
+            "/api/suggest_syllable_split": self._api_suggest_syllable_split,
         }
         handler = routes.get(self.path.split("?", 1)[0])
         if handler is None:
@@ -86,6 +87,14 @@ class PresenterHandler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             raise ValueError("payload must be an object")
         self._send_json(pipeline.export_json(body))
+
+    def _api_suggest_syllable_split(self, payload: dict[str, Any]) -> None:
+        # Both keys are required (no defaults); pipeline validates their types (ValueError -> 400).
+        # BrowserPipeline.suggestSyllableSplitRequest applies the same rules in browser mode.
+        missing = [name for name in ("word", "ipa") if name not in payload]
+        if missing:
+            raise ValueError(f"{' and '.join(missing)} is required")
+        self._send_json(pipeline.suggest_syllable_split(payload["word"], payload["ipa"]))
 
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)

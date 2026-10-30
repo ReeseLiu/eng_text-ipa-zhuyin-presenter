@@ -6,6 +6,8 @@ const state = {
   displayTable: {},
   activeEditInput: null,
   activeEditMeta: null,
+  // Preview of a syllable-split suggestion; never part of payload until applied.
+  syllableSuggestion: null,
 };
 
 const el = {
@@ -122,11 +124,18 @@ async function postJson(url, body) {
           Array.isArray(body?.stress_levels) ? body.stress_levels : [],
         );
       }
+      if (url === "/api/suggest_syllable_split") {
+        return browserPipeline.suggestSyllableSplitRequest(body);
+      }
       if (url === "/api/export_json") {
         return browserPipeline.exportJson(body?.payload && typeof body.payload === "object" ? body.payload : body || {});
       }
       throw new Error(`Unsupported route in browser mode: ${url}`);
     } catch (error) {
+      if (error?.code === "bad_request") {
+        // Invalid input, not a broken pipeline: fail like the server's 400 and keep browser mode.
+        throw error;
+      }
       browserPipelineInitError = error instanceof Error ? error : new Error(String(error || "unknown error"));
       console.error("Browser pipeline runtime failed:", browserPipelineInitError);
       if (!canUseServerApi()) {
@@ -140,6 +149,10 @@ async function postJson(url, body) {
     throw new Error(offlinePipelineUnavailableMessage());
   }
 
+  return postServerJson(url, body);
+}
+
+async function postServerJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -151,6 +164,36 @@ async function postJson(url, body) {
     throw new Error(message);
   }
   return payload;
+}
+
+let alignTableLoadPromise = null;
+
+// browser_align.js is ~2.5 MB, so it is only fetched when a suggestion is first requested.
+function ensureAlignTableLoaded() {
+  if (!browserPipeline || browserPipeline.hasAlignTable()) {
+    return Promise.resolve();
+  }
+  if (!alignTableLoadPromise) {
+    alignTableLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "browser_align.js";
+      script.async = true;
+      script.onload = () => {
+        if (window.BROWSER_ALIGN_TABLE) {
+          browserPipeline?.setAlignTable(window.BROWSER_ALIGN_TABLE);
+          resolve();
+        } else {
+          reject(new Error("browser_align.js 未定義 BROWSER_ALIGN_TABLE"));
+        }
+      };
+      script.onerror = () => reject(new Error("browser_align.js 載入失敗"));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      alignTableLoadPromise = null;
+      throw error;
+    });
+  }
+  return alignTableLoadPromise;
 }
 
 function setStatus(message, isError = false) {
@@ -655,6 +698,147 @@ function resolveManualSyllables(word) {
   return buildAutoManualSyllables(word);
 }
 
+const SYLLABLE_SPLIT_FAILURE_LABEL = {
+  oov: "字典查無此字",
+  pron_mismatch: "目前 IPA 對不上 CMUdict 發音",
+  no_alignment: "拼字與發音無法對齊",
+  cut_inside_chunk: "切點落在同一個拼字片段內（例如 x → ks）",
+  low_confidence: "切點信心不足",
+  reconstruct: "切分結果無法還原原字",
+};
+
+// Covers every input of buildSuggestedManualSyllables, so a preview goes stale (and is
+// hidden) as soon as the word, IPA, zhuyin_plus tokens or syllable slots change.
+function suggestionKeyForWord(word) {
+  const details = Array.isArray(word?.token_details) ? word.token_details : [];
+  return JSON.stringify([
+    String(word?.word || ""),
+    Array.isArray(word?.ipa) ? word.ipa : [],
+    displayTokensRawForSystem(word, "zhuyin_plus"),
+    details.map((detail) => [detail?.syllable_index ?? null, detail?.syllable_slot ?? null]),
+  ]);
+}
+
+function activeSuggestionFor(sentenceIdx, wordIdx, word) {
+  const current = state.syllableSuggestion;
+  if (!current || current.sentenceIdx !== sentenceIdx || current.wordIdx !== wordIdx) {
+    return null;
+  }
+  return current.key === suggestionKeyForWord(word) ? current : null;
+}
+
+function buildSuggestedManualSyllables(word, segments) {
+  const rows = buildAutoManualSyllables(word);
+  if (rows.length !== segments.length) {
+    return null;
+  }
+  return rows.map((row, idx) => ({ ...row, text: segments[idx] }));
+}
+
+async function requestSyllableSplitSuggestion(sentenceIdx, wordIdx) {
+  const word = sentences()[sentenceIdx]?.words?.[wordIdx];
+  if (!word) {
+    return;
+  }
+  try {
+    const body = { word: word.word || "", ipa: word.ipa || [] };
+    let result;
+    try {
+      await ensureAlignTableLoaded();
+      result = await postJson("/api/suggest_syllable_split", body);
+    } catch (error) {
+      if (!canUseServerApi()) {
+        throw error;
+      }
+      // Ask the server directly so a missing browser table does not disable the browser pipeline.
+      result = await postServerJson("/api/suggest_syllable_split", body);
+    }
+    const segments = Array.isArray(result?.segments) ? result.segments.map((s) => String(s)) : [];
+    let rows = null;
+    let note = "";
+    if (result?.status === "ok") {
+      rows = buildSuggestedManualSyllables(word, segments);
+      if (!rows) {
+        note = "建議片段數與音節列數不一致，不能套用。";
+      }
+    }
+    state.syllableSuggestion = {
+      sentenceIdx,
+      wordIdx,
+      key: suggestionKeyForWord(word),
+      status: String(result?.status || "failed"),
+      code: result?.code || null,
+      segments,
+      rows,
+      note,
+    };
+    state.sentenceIndex = sentenceIdx;
+    renderAll();
+  } catch (error) {
+    setStatus(`音節切分建議失敗：${error.message}`, true);
+  }
+}
+
+function buildSuggestionPreview(sentenceIdx, wordIdx, word, suggestion) {
+  const box = document.createElement("div");
+  box.className = "syllable-suggestion";
+
+  const text = document.createElement("p");
+  text.className = "syllable-suggestion-text";
+  if (suggestion.status === "ok") {
+    text.textContent = `建議（未套用）：${suggestion.segments.join(" · ")}`;
+  } else if (suggestion.status === "not_applicable") {
+    const hasIpa = Array.isArray(word?.ipa) && word.ipa.some((token) => String(token || "").trim());
+    text.textContent = hasIpa ? "單音節，不需要切分。" : "目前沒有 IPA，無法判斷音節，不需要切分。";
+  } else {
+    const label = SYLLABLE_SPLIT_FAILURE_LABEL[suggestion.code] || "無法建議";
+    text.textContent = `無法建議：${label}（${suggestion.code || "unknown"}）`;
+  }
+  box.appendChild(text);
+  if (suggestion.note) {
+    const note = document.createElement("p");
+    note.className = "syllable-suggestion-text";
+    note.textContent = suggestion.note;
+    box.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "manual-syllable-actions";
+  if (suggestion.status === "ok" && suggestion.rows) {
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "mini-action primary";
+    applyBtn.textContent = "套用建議";
+    applyBtn.addEventListener("click", () => {
+      // Rebuild slots from the live word: the preview's rows may predate later edits.
+      const current = sentences()[sentenceIdx]?.words?.[wordIdx];
+      const fresh = current ? activeSuggestionFor(sentenceIdx, wordIdx, current) : null;
+      const rows = fresh ? buildSuggestedManualSyllables(current, fresh.segments) : null;
+      state.syllableSuggestion = null;
+      if (!rows) {
+        renderAll();
+        setStatus("單字資料已變更，請重新按「建議切分」。", true);
+        return;
+      }
+      saveWordManualSyllables(sentenceIdx, wordIdx, rows, {
+        message: `${current.word || "word"} 已套用音節切分建議。`,
+      });
+    });
+    actions.appendChild(applyBtn);
+  }
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "mini-action";
+  closeBtn.textContent = "關閉";
+  closeBtn.addEventListener("click", () => {
+    state.syllableSuggestion = null;
+    renderAll();
+  });
+  actions.appendChild(closeBtn);
+  box.appendChild(actions);
+  return box;
+}
+
 function shouldShowManualSyllableEditor(word) {
   const manual = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
   if (manual.length > 0) {
@@ -730,9 +914,23 @@ function buildManualSyllableEditor(sentenceIdx, wordIdx, word) {
     });
   });
 
-  controls.append(autofillBtn, resetBtn);
+  const suggestBtn = document.createElement("button");
+  suggestBtn.type = "button";
+  suggestBtn.className = "mini-action";
+  suggestBtn.textContent = "建議切分";
+  suggestBtn.title = "依目前 IPA 預覽拼字切點，需按「套用建議」才會寫入";
+  suggestBtn.addEventListener("click", () => {
+    requestSyllableSplitSuggestion(sentenceIdx, wordIdx);
+  });
+
+  controls.append(suggestBtn, autofillBtn, resetBtn);
   header.append(title, controls);
   wrapper.appendChild(header);
+
+  const suggestion = activeSuggestionFor(sentenceIdx, wordIdx, word);
+  if (suggestion) {
+    wrapper.appendChild(buildSuggestionPreview(sentenceIdx, wordIdx, word, suggestion));
+  }
 
   const table = document.createElement("table");
   table.className = "manual-syllable-table";

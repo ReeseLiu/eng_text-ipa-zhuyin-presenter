@@ -16,6 +16,8 @@ REQUIRED_FILES = [
     ROOT / "app" / "app.js",
     ROOT / "app" / "browser_pipeline.js",
     ROOT / "app" / "browser_data.js",
+    # Built by scripts/build_align_table.py; loaded lazily for syllable-split suggestions.
+    ROOT / "app" / "browser_align.js",
     ROOT / "app" / "styles.css",
 ]
 

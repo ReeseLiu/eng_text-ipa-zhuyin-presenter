@@ -208,8 +208,9 @@ class PipelineTest(unittest.TestCase):
 
         self.assertEqual(len(word_group), 3)
         self.assertEqual([token["text"] for token in word_group], ["head", "quar", "ters,"])
-        self.assertEqual(word_group[0]["phonetic"], [23, 45, [16, 25]])
-        self.assertEqual(word_group[1]["phonetic"], [60, 71])
+        # /kw/ is a legal onset, so /k/ opens "quar" instead of closing "head".
+        self.assertEqual(word_group[0]["phonetic"], [23, 45, 16])
+        self.assertEqual(word_group[1]["phonetic"], [[22, 60], 71])
         self.assertEqual(word_group[2]["phonetic"], [15, 47, 39])
         self.assertEqual(word_group[0]["kkPhonetic"], word_group[1]["kkPhonetic"])
         self.assertEqual(word_group[0]["kkPhonetic"], word_group[2]["kkPhonetic"])

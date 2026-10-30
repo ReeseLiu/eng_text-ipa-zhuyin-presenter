@@ -370,6 +370,25 @@ button.secondary {
   gap: 6px;
 }
 
+.syllable-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px dashed #9db4c0;
+  border-radius: 8px;
+  background: #f6fafc;
+}
+
+.syllable-suggestion-text {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #47626f;
+}
+
 .manual-syllable-table {
   width: 100%;
   border-collapse: collapse;

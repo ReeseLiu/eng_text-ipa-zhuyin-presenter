@@ -31,6 +31,22 @@ LEGAL_ONSET_CLUSTERS_2 = {
     ("s", "j"),
     ("s", "l"),
     ("s", "ɹ"),
+    ("ʃ", "ɹ"),
+    ("k", "w"),
+    ("t", "w"),
+    ("d", "w"),
+    ("ɡ", "w"),
+    ("θ", "w"),
+    # Coronal + /j/ (tj, dj, nj, lj) is deliberately excluded: US English drops
+    # yod after coronals, so those clusters are not treated as onsets.
+    ("p", "j"),
+    ("b", "j"),
+    ("k", "j"),
+    ("ɡ", "j"),
+    ("f", "j"),
+    ("v", "j"),
+    ("m", "j"),
+    ("h", "j"),
 }
 
 LEGAL_ONSET_CLUSTERS_3 = {
@@ -41,6 +57,8 @@ LEGAL_ONSET_CLUSTERS_3 = {
     ("s", "k", "l"),
     ("s", "k", "w"),
     ("s", "t", "j"),
+    ("s", "k", "j"),
+    ("s", "p", "j"),
 }
 
 
