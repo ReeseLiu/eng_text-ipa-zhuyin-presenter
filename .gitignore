@@ -7,3 +7,5 @@ __pycache__/
 dist/
 dist-pages/
 offline_packages/
+
+reports/

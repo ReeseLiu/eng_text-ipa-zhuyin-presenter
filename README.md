@@ -70,6 +70,41 @@ python3 -m unittest discover -s tests
 
 CI runs the same command in `.github/workflows/tests.yml` (pushes and pull requests) and before the Pages build in `.github/workflows/pages.yml`.
 
+### Accuracy evaluation
+
+```bash
+python3 scripts/eval_syllable_split.py             # prints a summary, writes reports/syllable_split_eval.json (gitignored)
+python3 scripts/eval_syllable_split.py --no-write --text my_words.txt
+```
+
+Gold means "word → expected grapheme fragment list" for one IPA (ADR 0002), not "has a suggestion", and per ADR 0002 only a human-confirmed split is gold. The script merges three sources by (word, IPA) and labels each row:
+
+| Source | Label | Tier |
+| --- | --- | --- |
+| known word table `WORD_SEGMENT_HINTS` in `backend/pipeline.py` (against the production default IPA) | `candidate` | candidate |
+| `status: ok` cases in `tests/fixtures/syllable_split_cases.json` | `contract` (locks the aligner's own output) | candidate |
+| `tests/fixtures/syllable_split_gold.json`, entry with `"reviewed": true` (literal `true` only) | `reviewed` | reviewed |
+| `tests/fixtures/syllable_split_gold.json`, any other entry | `candidate` | candidate |
+
+Only the reviewed tier counts toward `gold_reviewed`. Candidate and contract rows are still scored, but in their own tier, so they never inflate it. Words from `--text` files (default: the strict sample sentence and `samples/demo.txt`) are also run so uncovered words show up as `missing_gold`.
+
+Source conflicts (same word and IPA, different splits): if exactly one distinct reviewed split exists, it wins, the pair is in the reviewed tier, and it is listed under `gold_conflicts.resolved_by_review`. Otherwise (only candidates disagree, or reviewed rows disagree) the pair is `unresolved`: its `gold` is null, its outcome is `gold_conflict`, and it is left out of every tier and rate until someone fixes a source. Source order never decides.
+
+Each item goes through `Pipeline.suggest_syllable_split` and is counted as `exact`, `mismatch` (`segment_count_differs` / `boundary_differs`), `no_suggestion` (by failure code), `missing_gold`, `gold_conflict`, or `not_applicable` (`no_gold`, `gold_single_segment`, `gold_multi_segment`). The report gives `by_tier` (`reviewed`, `candidate`), `by_source` (overlapping when a pair has several sources), and `rates` for `reviewed`, `candidate`, and `all_gold`:
+
+- `exact_rate_when_suggested = exact / (exact + mismatch)`
+- `suggestion_rate_on_gold = (exact + mismatch) / (exact + mismatch + no_suggestion + gold_multi_segment)`
+
+Rates are rounded to four places and are `null` when the denominator is zero (the reviewed tier today). A one-syllable `not_applicable` on a single-segment gold agrees with the gold and is left out of both rates; on a multi-segment gold it counts as a missed suggestion. `tests/test_syllable_split_eval.py` runs a fast subset plus these rules in CI.
+
+To grow the gold set, add entries to `tests/fixtures/syllable_split_gold.json` (`id`, `word`, `segments`, optional `ipa`, `reviewed`, `note`); `segments` must join back to `word` (golds that do not are listed under `invalid_gold` and not scored). Set `reviewed: true` only after a teacher confirmed the split. Applied `manual_syllables` from real edits are the intended long-term source.
+
+Limitations:
+- No entry is teacher-reviewed yet, so the reviewed tier is empty and its rates are `null`; the candidate rates are smoke signals, not accuracy estimates.
+- Several known-table entries are morpheme splits (`every|thing`, `how|ever`) rather than one segment per syllable, so they can never match exactly and show up as `segment_count_differs`.
+- The contract fixtures lock the aligner's current output, so their 100% exact rate is expected and pulls the candidate rates up.
+- Only the Python core is scored; JS parity is covered by the contract tests above.
+
 ## Offline Notes
 
 The MVP bundles these runtime resources under `data/`:
