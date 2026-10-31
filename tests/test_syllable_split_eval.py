@@ -93,7 +93,18 @@ class SyllableSplitEvalTest(unittest.TestCase):
                 self.assertEqual(self.module.main(["--out", str(out)]), 0)
             self.assertIn("exact:", stdout.getvalue())
             report = json.loads(out.read_text(encoding="utf-8"))
-            self.assertEqual(report["report_version"], self.module.REPORT_VERSION)
+            # Pinned literally: bumping the report format must be a deliberate test change too.
+            self.assertEqual(report["report_version"], 3)
+            required = {
+                "report_version", "align_table", "gold_items", "gold_reviewed", "gold_candidate", "gold_conflicts",
+                "invalid_gold", "stale_reviewed", "ipa_source_human", "rates", "reviewed_rates_by_stratum",
+                "overall", "by_tier", "reviewed_by_stratum", "by_source", "items",
+            }
+            self.assertLessEqual(required, set(report))
+            self.assertEqual(set(report["rates"]), {"reviewed", "candidate", "all_gold"})
+            for rates in report["rates"].values():
+                self.assertEqual(set(rates), {"compared", "with_gold", "exact_rate_when_suggested", "suggestion_rate_on_gold"})
+            self.assertEqual(set(report["gold_conflicts"]), {"resolved_by_review", "unresolved"})
 
 
 def counts(module, exact=0, mismatch=0, no_suggestion=0, multi=0, single=0):
@@ -106,8 +117,18 @@ def counts(module, exact=0, mismatch=0, no_suggestion=0, multi=0, single=0):
     return c
 
 
-def raw(word, gold, label, source="curated", ipa=("x",)):
-    return {"word": word, "ipa": list(ipa), "gold": gold, "source": source, "label": label}
+def syllables(n):
+    """An IPA with n syllables, so synthetic golds pass the segment-count legality rule."""
+    return ["ɑ"] + ["b", "ɑ"] * (n - 1)
+
+
+def raw(word, gold, label, source="curated", ipa=None):
+    return {"word": word, "ipa": list(ipa) if ipa is not None else syllables(len(gold)), "gold": gold, "source": source, "label": label}
+
+
+def reviewed_entry(module, word, ipa, segments, **extra):
+    return {"id": word, "word": word, "ipa": ipa, "segments": segments, "reviewed": True,
+            "reviewed_fingerprint": module.batch_gold.reviewed_fingerprint(word, ipa, segments), **extra}
 
 
 class GoldSemanticsTest(unittest.TestCase):
@@ -174,14 +195,14 @@ class GoldSemanticsTest(unittest.TestCase):
 
     def test_different_ipa_is_not_a_conflict(self):
         rows, _ = self.module.merge_gold(
-            None, [raw("ab", ["a", "b"], "candidate", ipa=("x",)), raw("ab", ["ab"], "candidate", ipa=("y",))]
+            None, [raw("ab", ["a", "b"], "candidate"), raw("ab", ["ab"], "candidate")]
         )
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(row["conflict"] is None for row in rows))
 
     def test_only_literal_true_marks_curated_reviewed(self):
         entries = [
-            {"word": "w1", "segments": ["w1"], "ipa": ["x"], "reviewed": True},
+            reviewed_entry(self.module, "w1", ["x"], ["w1"]),
             {"word": "w2", "segments": ["w2"], "ipa": ["x"], "reviewed": "yes"},
             {"word": "w3", "segments": ["w3"], "ipa": ["x"], "reviewed": 1},
             {"word": "w4", "segments": ["w4"], "ipa": ["x"]},
@@ -196,30 +217,38 @@ class GoldSemanticsTest(unittest.TestCase):
         self.assertEqual(curated, {"w1": "reviewed", "w2": "candidate", "w3": "candidate", "w4": "candidate"})
 
     def test_evaluate_scores_tiers_and_conflicts_separately(self):
+        m = self.module
+        somebody_ipa = m.default_pipeline.process_word("somebody")["ipa"]
         entries = [
-            # Overrides the known-table morpheme split some|body with a reviewed one the aligner matches.
-            {"word": "somebody", "segments": ["some", "bo", "dy"], "reviewed": True},
-            # Disagrees with the known table and is not reviewed: unresolved, never scored.
-            {"word": "however", "segments": ["ho", "we", "ver"], "reviewed": False},
-            # One-syllable word with a multi-segment reviewed gold: not_applicable counts as a miss.
-            {"word": "cat", "segments": ["c", "at"], "reviewed": True},
+            # Reviewed and matched by the aligner (the known-table morpheme split some|body is invalid gold).
+            reviewed_entry(m, "somebody", somebody_ipa, ["some", "bo", "dy"]),
+            # Overrides the contract fixture li|ttle with a reviewed split the aligner does not give.
+            reviewed_entry(m, "little", ["l", "ɪ", "t", "ə", "l"], ["lit", "tle"]),
+            # Disagrees with the contract fixture know|ledge and is not reviewed: unresolved, never scored.
+            {"id": "knowledge", "word": "knowledge", "ipa": ["n", "ɑ", "l", "ə", "dʒ"], "segments": ["knowl", "edge"], "reviewed": False},
+            # Two segments on a one-syllable IPA: invalid_gold first, so not also stale despite the missing fingerprint.
+            {"id": "cat", "word": "cat", "segments": ["c", "at"], "reviewed": True},
         ]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gold.json"
             path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
-            report = self.module.evaluate(curated_path=path)
+            report = m.evaluate(curated_path=path)
         items = {item["word"]: item for item in report["items"]}
         self.assertEqual(report["gold_reviewed"], 2)
         self.assertEqual(report["gold_conflicts"], {"resolved_by_review": 1, "unresolved": 1})
+        self.assertEqual(report["stale_reviewed"], [])
+        cat = [bad for bad in report["invalid_gold"] if bad["source"] == "curated"]
+        self.assertEqual([(bad["id"], bad["reason"]) for bad in cat], [("cat", "syllable_count_mismatch")])
+        self.assertNotIn("cat", items)
 
         self.assertEqual((items["somebody"]["tier"], items["somebody"]["outcome"]), ("reviewed", "exact"))
-        self.assertEqual(items["however"]["outcome"], "gold_conflict")
-        self.assertEqual(items["cat"]["detail"], "gold_multi_segment")
+        self.assertEqual((items["little"]["tier"], items["little"]["detail"]), ("reviewed", "boundary_differs"))
+        self.assertEqual(items["knowledge"]["outcome"], "gold_conflict")
 
         reviewed = report["by_tier"]["reviewed"]
-        self.assertEqual((reviewed["items"], reviewed["exact"], reviewed["not_applicable"]["gold_multi_segment"]), (2, 1, 1))
-        self.assertEqual(report["rates"]["reviewed"]["exact_rate_when_suggested"], 1.0)
-        self.assertEqual(report["rates"]["reviewed"]["suggestion_rate_on_gold"], 0.5)
+        self.assertEqual((reviewed["items"], reviewed["exact"], reviewed["mismatch"]["total"]), (2, 1, 1))
+        self.assertEqual(report["rates"]["reviewed"]["exact_rate_when_suggested"], 0.5)
+        self.assertEqual(report["rates"]["reviewed"]["suggestion_rate_on_gold"], 1.0)
         self.assertEqual(report["by_tier"]["candidate"]["gold_conflict"], 0)
         self.assertEqual(report["overall"]["gold_conflict"], 1)
         all_gold = report["rates"]["all_gold"]
@@ -228,8 +257,8 @@ class GoldSemanticsTest(unittest.TestCase):
 
     def test_by_source_counts_duplicate_rows_once(self):
         entries = [
-            {"word": "cat", "segments": ["cat"], "reviewed": True},
-            {"word": "cat", "segments": ["cat"], "reviewed": True},
+            reviewed_entry(self.module, "cat", ["k", "æ", "t"], ["cat"]),
+            reviewed_entry(self.module, "cat", ["k", "æ", "t"], ["cat"]),
         ]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gold.json"

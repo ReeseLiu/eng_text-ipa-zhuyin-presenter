@@ -6,6 +6,8 @@ CMUdict 給的是音素／發音音節界線，不是字母切點；grapheme–p
 
 accepted
 
+部分取代：本篇「人工判定後寫入 `manual_syllables` 才視為金標」與「金標＝詞 → grapheme 片段列表」，在**評估／金標管道**上由 ADR 0003 取代（評估用已審金標寫在金標檔，鍵為 word＋IPA，並綁定內容指紋）。ADR 0003 已於 2026-10-31 accepted，上述兩點自此以 ADR 0003 為準。產品的對齊失敗不給建議、未套用不寫入、兩層優先序，以及產品 `manual_syllables` 的語意，仍依本篇。
+
 ## Considered Options
 
 - 低信心仍給「最佳猜測」建議：降低空結果率，但易偏一格且易被誤當正解；否決。

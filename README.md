@@ -77,13 +77,13 @@ python3 scripts/eval_syllable_split.py             # prints a summary, writes re
 python3 scripts/eval_syllable_split.py --no-write --text my_words.txt
 ```
 
-Gold means "word → expected grapheme fragment list" for one IPA (ADR 0002), not "has a suggestion", and per ADR 0002 only a human-confirmed split is gold. The script merges three sources by (word, IPA) and labels each row:
+Gold means "(word, IPA) → expected grapheme fragment list" (ADR 0003, spec `docs/specs/batch-gold-labeling-v1.md`), not "has a suggestion", and only a human-confirmed split is reviewed gold. Reviewed gold lives in the gold file, never auto-written to `manual_syllables`. The script merges three sources by (word, IPA) and labels each row:
 
 | Source | Label | Tier |
 | --- | --- | --- |
 | known word table `WORD_SEGMENT_HINTS` in `backend/pipeline.py` (against the production default IPA) | `candidate` | candidate |
 | `status: ok` cases in `tests/fixtures/syllable_split_cases.json` | `contract` (locks the aligner's own output) | candidate |
-| `tests/fixtures/syllable_split_gold.json`, entry with `"reviewed": true` (literal `true` only) | `reviewed` | reviewed |
+| `tests/fixtures/syllable_split_gold.json`, entry with `"reviewed": true` (literal `true` only), an explicit `ipa` and a matching `reviewed_fingerprint` | `reviewed` | reviewed |
 | `tests/fixtures/syllable_split_gold.json`, any other entry | `candidate` | candidate |
 
 Only the reviewed tier counts toward `gold_reviewed`. Candidate and contract rows are still scored, but in their own tier, so they never inflate it. Words from `--text` files (default: the strict sample sentence and `samples/demo.txt`) are also run so uncovered words show up as `missing_gold`.
@@ -97,11 +97,24 @@ Each item goes through `Pipeline.suggest_syllable_split` and is counted as `exac
 
 Rates are rounded to four places and are `null` when the denominator is zero (the reviewed tier today). A one-syllable `not_applicable` on a single-segment gold agrees with the gold and is left out of both rates; on a multi-segment gold it counts as a missed suggestion. `tests/test_syllable_split_eval.py` runs a fast subset plus these rules in CI.
 
-To grow the gold set, add entries to `tests/fixtures/syllable_split_gold.json` (`id`, `word`, `segments`, optional `ipa`, `reviewed`, `note`); `segments` must join back to `word` (golds that do not are listed under `invalid_gold` and not scored). Set `reviewed: true` only after a teacher confirmed the split. Applied `manual_syllables` from real edits are the intended long-term source.
+Every gold row is classified once, legality first: a row with an empty segment, segments that do not join back to the word, a split codepoint, or a segment count different from the IPA's syllable count is listed under `invalid_gold` (with `reason`) and never scored; this applies to every source. Otherwise a `"reviewed": true` entry without `ipa`, without `reviewed_fingerprint`, or with one that no longer matches SHA-256 of the NFC canonical JSON `[word, ipa, segments]` is listed under `stale_reviewed` and scored as a candidate. Editing `audit` or `note` keeps the binding; editing `word`, `ipa` or `segments` breaks it. `reviewed_rates_by_stratum` splits the reviewed tier by `sampling_stratum` (`ok_global` sample vs `unstratified`), and `ipa_source_human` lists entries whose IPA a teacher added outside CMUdict.
+
+To grow the gold set, add entries to `tests/fixtures/syllable_split_gold.json` (`id`, `word`, `segments`, `ipa`, `reviewed`, `reviewed_fingerprint`, `note`, plus the optional fields in the spec). Set `reviewed: true` only after a teacher confirmed the split, through `batch_gold.mark_reviewed` (or the same fingerprint algorithm); `batch_gold.update_entry` revokes `reviewed` when `word`/`ipa`/`segments` change.
+
+### Batch gold queue
+
+```bash
+python3 scripts/build_batch_gold_queue.py           # full align table -> reports/batch_gold_queue.jsonl + reports/batch_gold_queue_report.json
+python3 scripts/build_batch_gold_queue.py --batch-size 50 --sample-n 30 --sample-seed 0 --gold-template /tmp/gold_template.json
+python3 scripts/build_batch_gold_queue.py --limit 2000   # development only
+```
+
+Every (word, CMUdict IPA) in the align table goes through `Pipeline.suggest_syllable_split`. Failed rows are all queued, batched by failure code and word initial (`batch_id = "{code}|{initial}|{chunk_index}"`, sorted by `(word, ipa)`); `ok` rows are sampled globally (`ok_global`, uniform without replacement, `random.Random(sample_seed).sample` over the sorted frame). The report holds the population counts per code and the population `suggestion_rate = ok / (ok + failed)` (`not_applicable` excluded); this, not the gold file, is the product coverage figure. `--gold-template` writes `reviewed: false` skeletons for the sampled rows only.
 
 Limitations:
 - No entry is teacher-reviewed yet, so the reviewed tier is empty and its rates are `null`; the candidate rates are smoke signals, not accuracy estimates.
-- Several known-table entries are morpheme splits (`every|thing`, `how|ever`) rather than one segment per syllable, so they can never match exactly and show up as `segment_count_differs`.
+- Several known-table entries are morpheme splits (`every|thing`, `how|ever`) rather than one segment per syllable; under the legality contract they are `invalid_gold` and not scored.
+- Because a legal gold always has one segment per syllable, `gold_multi_segment` can no longer occur for valid gold; the counter stays for report compatibility.
 - The contract fixtures lock the aligner's current output, so their 100% exact rate is expected and pulls the candidate rates up.
 - Only the Python core is scored; JS parity is covered by the contract tests above.
 

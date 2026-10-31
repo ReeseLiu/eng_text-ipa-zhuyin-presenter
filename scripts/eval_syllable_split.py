@@ -2,8 +2,12 @@
 """Evaluate syllable-split suggestions against gold grapheme fragment lists.
 
 ADR 0001 asks for automated accuracy evaluation on the known word table before
-anything else; ADR 0002 defines gold as "word -> expected grapheme fragment
-list". Gold comes from three sources, keyed by (word, IPA), each with a label:
+anything else. For this evaluation pipeline, ADR 0003 (accepted) defines gold
+as "(word, IPA) -> expected grapheme fragment list",
+with reviewed gold kept in a gold file rather than in the product's
+manual_syllables. ADR 0002 still governs the product side: manual_syllables,
+aligner failure, apply rules, and the two-level priority. Gold comes from three
+sources, keyed by (word, IPA), each with a label:
 
     known_word_table  WORD_SEGMENT_HINTS in backend/pipeline.py, against the
                       production default IPA (Pipeline.process_word); label
@@ -13,9 +17,23 @@ list". Gold comes from three sources, keyed by (word, IPA), each with a label:
     curated           tests/fixtures/syllable_split_gold.json; label "reviewed"
                       only for entries with "reviewed": true, else "candidate"
 
-ADR 0002 makes gold only what a human confirmed, so only "reviewed" rows feed
-the reviewed tier. Contract and candidate rows are still scored, in the
-candidate tier, and never count toward gold_reviewed.
+Only human-confirmed ("reviewed") rows feed the reviewed tier. A curated entry
+is reviewed only when "reviewed" is literally true, it carries an explicit
+"ipa", and its "reviewed_fingerprint" matches the recomputed
+SHA-256 of NFC [word, ipa, segments] (scripts/batch_gold.py). Each gold row is
+classified once, in this order (docs/specs/batch-gold-labeling-v1.md):
+
+    invalid_gold    breaks the legality contract (empty segment, does not
+                    rebuild the word, codepoint split, segment count != the
+                    IPA's syllable count, wrong field types); checked for every
+                    source and never scored
+    stale_reviewed  otherwise, "reviewed": true without ipa, without a
+                    fingerprint, or with a mismatching one; scored as candidate
+
+Contract and candidate rows are still scored, in the candidate tier, and never
+count toward gold_reviewed. Reviewed rates are also reported per
+sampling_stratum. The population suggestion_rate is not inferred from gold; it
+comes from scripts/build_batch_gold_queue.py over the whole align table.
 
 When sources disagree on one (word, IPA): a single reviewed split wins and the
 pair stays in the reviewed tier; otherwise (no reviewed row, or reviewed rows
@@ -68,59 +86,117 @@ sys.path.insert(0, str(ROOT))
 from backend.pipeline import STRICT_SAMPLE_SENTENCE, WORD_SEGMENT_HINTS, Pipeline, pipeline as default_pipeline  # noqa: E402
 from backend.phoneme_core.syllable_split import FAILURE_CODES  # noqa: E402
 
+sys.path.insert(0, str(ROOT / "scripts"))
+import batch_gold  # noqa: E402
+
 FIXTURE_CASES_PATH = ROOT / "tests" / "fixtures" / "syllable_split_cases.json"
 CURATED_GOLD_PATH = ROOT / "tests" / "fixtures" / "syllable_split_gold.json"
 DEFAULT_TEXT_PATHS = (ROOT / "samples" / "demo.txt",)
 DEFAULT_REPORT_PATH = ROOT / "reports" / "syllable_split_eval.json"
-REPORT_VERSION = 2
+REPORT_VERSION = 3
 TIERS = ("reviewed", "candidate")
+UNSTRATIFIED = "unstratified"
 
 
 def _key(word: str, ipa: list[str]) -> tuple[str, tuple[str, ...]]:
     return (word, tuple(ipa))
 
 
+def _nfc_list(value: Any) -> Any:
+    return [batch_gold.nfc(item) for item in value] if batch_gold.is_str_list(value) else value
+
+
 def load_raw_gold(curated_path: Path = CURATED_GOLD_PATH) -> list[dict[str, Any]]:
-    """Per-source gold rows ``{word, ipa, gold, source, label}``; ``ipa`` None means the production default."""
+    """Per-source gold rows ``{word, ipa, ipa_given, gold, source, label, ...}``.
+
+    ``ipa_given`` False (only when the field is truly absent) means the
+    production default IPA; a present ``ipa`` is kept as is, even null or the
+    wrong type, so merge_gold can report it as invalid. Curated rows also carry
+    ``id``, ``reviewed_fingerprint``, ``sampling_stratum`` and ``ipa_source``.
+    A curated ``label`` of "reviewed" is only the entry's claim: merge_gold
+    checks legality first and only then the fingerprint binding, downgrading
+    stale claims to candidate.
+    """
     raw: list[dict[str, Any]] = []
     for word, segments in WORD_SEGMENT_HINTS.items():
-        raw.append({"word": word, "ipa": None, "gold": list(segments), "source": "known_word_table", "label": "candidate"})
+        raw.append(
+            {"word": word, "ipa": None, "ipa_given": False, "gold": list(segments), "source": "known_word_table", "label": "candidate"}
+        )
     for case in json.loads(FIXTURE_CASES_PATH.read_text(encoding="utf-8"))["cases"]:
         if case["expected"]["status"] == "ok":
             raw.append(
-                {"word": case["word"], "ipa": case["ipa"], "gold": case["expected"]["segments"], "source": "fixture", "label": "contract"}
+                {"word": case["word"], "ipa": case["ipa"], "ipa_given": True, "gold": case["expected"]["segments"], "source": "fixture", "label": "contract"}
             )
+    # Read from disk on every call: no reviewed state is cached between loads.
     for entry in json.loads(curated_path.read_text(encoding="utf-8"))["entries"]:
+        word = batch_gold.nfc(entry["word"]) if isinstance(entry.get("word"), str) else entry.get("word")
         raw.append(
             {
-                "word": entry["word"],
-                "ipa": entry.get("ipa"),
-                "gold": list(entry["segments"]),
+                "word": word,
+                "ipa": _nfc_list(entry.get("ipa")),
+                "ipa_given": "ipa" in entry,
+                "gold": _nfc_list(entry.get("segments")),
                 "source": "curated",
                 # Only a literal true counts; "yes", 1 and the like stay candidates.
                 "label": "reviewed" if entry.get("reviewed") is True else "candidate",
+                "id": entry.get("id"),
+                "reviewed_fingerprint": entry.get("reviewed_fingerprint"),
+                "sampling_stratum": entry.get("sampling_stratum"),
+                "ipa_source": entry.get("ipa_source"),
             }
         )
     return raw
 
 
-def merge_gold(pipe: Pipeline, raw: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _ipa_given(row: dict[str, Any]) -> bool:
+    # Rows built without the flag (tests, older callers) fall back to "a non-null ipa was given".
+    return row.get("ipa_given", row["ipa"] is not None)
+
+
+def merge_gold(pipe: Pipeline, raw: list[dict[str, Any]], issues: dict[str, list[dict[str, Any]]] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Merge raw rows by (word, IPA) into ``{word, ipa, gold, sources, labels, reviewed, conflict}``; also return invalid golds.
 
-    A gold whose segments do not join back to the word cannot be a split of it;
-    it is reported as invalid and left out rather than scored as a mismatch.
+    Each row is classified once: a gold that breaks the legality contract is
+    reported as invalid (with ``reason``) and left out rather than scored;
+    otherwise a curated ``reviewed: true`` row whose fingerprint binding fails
+    is recorded in ``issues["stale_reviewed"]`` and merged as a candidate. Curated rows marked
+    ``ipa_source: "human"`` are listed in ``issues["ipa_source_human"]``.
     ``conflict`` is None when all sources agree, else
     ``{"resolution": "reviewed" | "unresolved", "golds": [{source, label, gold}, ...]}``;
     unresolved pairs get ``gold`` None so they are never scored against either side.
     """
+    issues = issues if issues is not None else {}
+    stale = issues.setdefault("stale_reviewed", [])
+    human_ipa = issues.setdefault("ipa_source_human", [])
     groups: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = {}
     invalid: list[dict[str, Any]] = []
     for row in raw:
-        if "".join(row["gold"]) != row["word"]:
-            invalid.append({"word": row["word"], "gold": row["gold"], "source": row["source"], "label": row["label"]})
+        if not isinstance(row["word"], str) or not row["word"]:
+            ipa, reason = None, "word_not_string"
+        elif _ipa_given(row):
+            # A present ipa is never replaced by the default, even when null or mistyped.
+            ipa = row["ipa"]
+            reason = batch_gold.legality_error(row["word"], row["gold"], ipa)
+        else:
+            ipa = pipe.process_word(row["word"])["ipa"]
+            reason = batch_gold.legality_error(row["word"], row["gold"], ipa)
+        if reason:
+            invalid.append(
+                {"id": row.get("id"), "word": row["word"], "gold": row["gold"], "source": row["source"], "label": row["label"], "reason": reason}
+            )
             continue
-        ipa = list(row["ipa"]) if row["ipa"] is not None else pipe.process_word(row["word"])["ipa"]
-        groups.setdefault(_key(row["word"], ipa), []).append(row)
+        # The fingerprint is computed only now: legality has ruled out lone surrogates
+        # and wrong types, which would break hashing or be misreported as stale.
+        if row["label"] == "reviewed" and "reviewed_fingerprint" in row:
+            binding = {"word": row["word"], "ipa": row["ipa"] if _ipa_given(row) else None, "segments": row["gold"],
+                       "reviewed_fingerprint": row["reviewed_fingerprint"]}
+            reason = batch_gold.stale_reason(binding)
+            if reason:
+                stale.append({"id": row.get("id"), "word": row["word"], "source": row["source"], "reason": reason})
+                row = {**row, "label": "candidate"}
+        if row.get("ipa_source") == "human":
+            human_ipa.append({"id": row.get("id"), "word": row["word"], "ipa": list(ipa)})
+        groups.setdefault(_key(row["word"], list(ipa)), []).append(row)
 
     merged: list[dict[str, Any]] = []
     for (word, ipa), rows in groups.items():
@@ -132,6 +208,8 @@ def merge_gold(pipe: Pipeline, raw: list[dict[str, Any]]) -> tuple[list[dict[str
             gold, reviewed, resolution = reviewed_golds[0], True, "reviewed"
         else:
             gold, reviewed, resolution = None, False, "unresolved"
+        gold_rows = [row for row in rows if row["label"] == "reviewed"] if reviewed else rows
+        stratum = next((row["sampling_stratum"] for row in gold_rows if row.get("sampling_stratum")), None)
         merged.append(
             {
                 "word": word,
@@ -141,6 +219,7 @@ def merge_gold(pipe: Pipeline, raw: list[dict[str, Any]]) -> tuple[list[dict[str
                 "labels": sorted({row["label"] for row in rows}),
                 "reviewed": reviewed,
                 "tier": "reviewed" if reviewed else "candidate",
+                "sampling_stratum": stratum,
                 "conflict": None
                 if resolution is None
                 else {
@@ -160,8 +239,10 @@ def _distinct(golds: Any) -> list[list[str]]:
     return out
 
 
-def collect_gold(pipe: Pipeline, curated_path: Path = CURATED_GOLD_PATH) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    return merge_gold(pipe, load_raw_gold(curated_path))
+def collect_gold(
+    pipe: Pipeline, curated_path: Path = CURATED_GOLD_PATH, issues: dict[str, list[dict[str, Any]]] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return merge_gold(pipe, load_raw_gold(curated_path), issues)
 
 
 def collect_unlabeled(pipe: Pipeline, texts: list[str], gold_keys: set[tuple[str, tuple[str, ...]]]) -> list[dict[str, Any]]:
@@ -186,6 +267,7 @@ def collect_unlabeled(pipe: Pipeline, texts: list[str], gold_keys: set[tuple[str
                         "labels": [],
                         "reviewed": False,
                         "tier": "no_gold",
+                        "sampling_stratum": None,
                         "conflict": None,
                     }
                 )
@@ -249,13 +331,15 @@ def compute_rates(counts: dict[str, Any]) -> dict[str, Any]:
 
 
 def evaluate(pipe: Pipeline = default_pipeline, texts: list[str] | None = None, curated_path: Path = CURATED_GOLD_PATH) -> dict[str, Any]:
-    gold_rows, invalid_gold = collect_gold(pipe, curated_path)
+    issues: dict[str, list[dict[str, Any]]] = {}
+    gold_rows, invalid_gold = collect_gold(pipe, curated_path, issues)
     gold_keys = {_key(row["word"], row["ipa"]) for row in gold_rows}
     unlabeled = collect_unlabeled(pipe, texts or [], gold_keys)
 
     overall = _empty_counts()
     by_tier = {tier: _empty_counts() for tier in TIERS}
     by_source: dict[str, dict[str, Any]] = {}
+    by_stratum: dict[str, dict[str, Any]] = {}
     items = []
     for row in [*gold_rows, *unlabeled]:
         suggestion = pipe.suggest_syllable_split(row["word"], row["ipa"])
@@ -264,6 +348,8 @@ def evaluate(pipe: Pipeline = default_pipeline, texts: list[str] | None = None, 
         _bump(overall, outcome, detail)
         if row["tier"] in by_tier and not unresolved:
             _bump(by_tier[row["tier"]], outcome, detail)
+            if row["tier"] == "reviewed":
+                _bump(by_stratum.setdefault(row["sampling_stratum"] or UNSTRATIFIED, _empty_counts()), outcome, detail)
         # A pair can carry several rows from one source; count it once per source.
         for source in dict.fromkeys(row["sources"]):
             _bump(by_source.setdefault(source, _empty_counts()), outcome, detail)
@@ -295,13 +381,18 @@ def evaluate(pipe: Pipeline = default_pipeline, texts: list[str] | None = None, 
             "unresolved": sum(1 for row in gold_rows if row["conflict"] and row["conflict"]["resolution"] == "unresolved"),
         },
         "invalid_gold": invalid_gold,
+        "stale_reviewed": issues["stale_reviewed"],
+        "ipa_source_human": issues["ipa_source_human"],
         "rates": {
             "reviewed": compute_rates(by_tier["reviewed"]),
             "candidate": compute_rates(by_tier["candidate"]),
             "all_gold": compute_rates(all_gold),
         },
+        # Reviewed tier only, so fail-all and ok_global samples are not mixed; unsampled rows are "unstratified".
+        "reviewed_rates_by_stratum": {stratum: compute_rates(counts) for stratum, counts in sorted(by_stratum.items())},
         "overall": overall,
         "by_tier": by_tier,
+        "reviewed_by_stratum": by_stratum,
         "by_source": by_source,
         "items": items,
     }
@@ -323,7 +414,8 @@ def format_summary(report: dict[str, Any]) -> str:
     lines = [
         f"gold items: {report['gold_items']} (reviewed {report['gold_reviewed']}, candidate {report['gold_candidate']},"
         f" conflicts resolved_by_review={conflicts['resolved_by_review']} unresolved={conflicts['unresolved']},"
-        f" invalid {len(report['invalid_gold'])})",
+        f" invalid {len(report['invalid_gold'])}, stale_reviewed {len(report['stale_reviewed'])},"
+        f" ipa_source_human {len(report['ipa_source_human'])})",
         f"evaluated: {overall['items']}",
         f"  exact:          {overall['exact']}",
         f"  mismatch:       {overall['mismatch']['total']}"
@@ -344,11 +436,19 @@ def format_summary(report: dict[str, Any]) -> str:
     lines.append("by tier:")
     for tier, counts in report["by_tier"].items():
         lines.append(f"  {tier:<17} {_counts_line(counts)}")
+    for stratum, rates in report["reviewed_rates_by_stratum"].items():
+        lines.append(
+            f"  reviewed/{stratum:<14} {rates['exact_rate_when_suggested']} ({rates['compared']} compared)"
+            f" / {rates['suggestion_rate_on_gold']} ({rates['with_gold']} with gold)"
+        )
     lines.append("by source:")
     for source, counts in sorted(report["by_source"].items()):
         lines.append(f"  {source:<17} {_counts_line(counts)}")
     for bad in report["invalid_gold"]:
-        lines.append(f"  invalid gold ({bad['source']}) {bad['word']}: {'|'.join(bad['gold'])} does not rebuild the word")
+        gold = "|".join(bad["gold"]) if batch_gold.is_str_list(bad["gold"]) else repr(bad["gold"])
+        lines.append(f"  invalid gold ({bad['source']}) {bad['word']}: {gold} ({bad['reason']})")
+    for row in report["stale_reviewed"]:
+        lines.append(f"  stale reviewed ({row['source']}) {row['id'] or row['word']}: {row['reason']}, scored as candidate")
     for item in report["items"]:
         if item["conflict"]:
             golds = ", ".join(f"{g['source']}={'|'.join(g['gold'])}" for g in item["conflict"]["golds"])
@@ -359,6 +459,10 @@ def format_summary(report: dict[str, Any]) -> str:
                 f"  mismatch [{item['tier']}] {item['word']}: suggested {'|'.join(item['suggestion'])} vs gold {'|'.join(item['gold'])}"
             )
     return "\n".join(lines)
+
+
+def _safe_text(text: str) -> str:
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -372,10 +476,12 @@ def main(argv: list[str] | None = None) -> int:
     text_paths = args.text if args.text else list(DEFAULT_TEXT_PATHS)
     texts = [STRICT_SAMPLE_SENTENCE, *(path.read_text(encoding="utf-8") for path in text_paths)]
     report = evaluate(texts=texts, curated_path=args.gold)
-    print(format_summary(report))
+    # Invalid gold may echo lone surrogates; escape them instead of crashing the output.
+    print(_safe_text(format_summary(report)))
     if not args.no_write:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # backslashreplace turns a lone surrogate into a "\udXXX" JSON escape, so the file stays valid JSON.
+        args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", errors="backslashreplace")
         print(f"report: {args.out}")
     return 0
 
