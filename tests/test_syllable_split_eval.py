@@ -22,7 +22,8 @@ class SyllableSplitEvalTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = load_eval()
-        cls.report = cls.module.evaluate(texts=["The story was read aloud."])
+        # "synapse" keeps a missing_gold text item: its only CMUdict IPA (s ɪ æ p s) drops the n, so it is unlikely ever to get gold.
+        cls.report = cls.module.evaluate(texts=["The story was read aloud by a synapse."])
 
     def test_counts_add_up(self):
         overall = self.report["overall"]
