@@ -63,10 +63,12 @@ class SyllableSplitEvalTest(unittest.TestCase):
     def test_invalid_gold_is_reported_not_scored(self):
         invalid = self.report["invalid_gold"]
         self.assertNotIn("curated", {bad["source"] for bad in invalid})
-        invalid_words = {bad["word"] for bad in invalid}
-        for item in self.report["items"]:
-            if item["word"] in invalid_words:
-                self.assertIsNone(item["gold"], item["word"])
+        # A word can have an invalid entry in one source and a valid one in another (e.g. wherever);
+        # only an item that still carries the invalid source must be unscored.
+        for bad in invalid:
+            for item in self.report["items"]:
+                if item["word"] == bad["word"] and bad["source"] in item["sources"]:
+                    self.assertIsNone(item["gold"], item["word"])
 
     def test_text_words_without_gold_are_missing_gold(self):
         text_items = [item for item in self.report["items"] if item["sources"] == ["text"]]
@@ -74,17 +76,20 @@ class SyllableSplitEvalTest(unittest.TestCase):
         self.assertTrue(all(item["gold"] is None for item in text_items))
 
     def test_contract_and_candidate_sources_do_not_count_as_reviewed(self):
-        # The checked-in curated entries are all reviewed=false, so nothing is reviewed gold yet.
-        self.assertEqual(self.report["gold_reviewed"], 0)
-        self.assertEqual(self.report["gold_candidate"], self.report["gold_items"])
-        self.assertEqual(self.report["by_tier"]["reviewed"]["items"], 0)
-        self.assertIsNone(self.report["rates"]["reviewed"]["exact_rate_when_suggested"])
-        self.assertIsNone(self.report["rates"]["reviewed"]["suggestion_rate_on_gold"])
+        # Reviewed gold comes only from reviewed curated entries; the tiers partition all gold.
+        self.assertGreater(self.report["gold_reviewed"], 0)
+        self.assertEqual(self.report["gold_reviewed"] + self.report["gold_candidate"], self.report["gold_items"])
+        self.assertEqual(self.report["by_tier"]["reviewed"]["items"], self.report["gold_reviewed"])
         for item in self.report["items"]:
+            if item["reviewed"]:
+                self.assertEqual(set(item["sources"]), {"curated"}, item["word"])
             if "fixture" in item["sources"] or "known_word_table" in item["sources"]:
                 self.assertFalse(item["reviewed"], item["word"])
         # Contract fixtures are still scored, just in the candidate tier.
-        self.assertEqual(self.report["by_tier"]["candidate"]["exact"], self.report["overall"]["exact"])
+        self.assertEqual(
+            self.report["by_tier"]["reviewed"]["exact"] + self.report["by_tier"]["candidate"]["exact"],
+            self.report["overall"]["exact"],
+        )
 
     def test_cli_writes_report(self):
         with tempfile.TemporaryDirectory() as tmp:
