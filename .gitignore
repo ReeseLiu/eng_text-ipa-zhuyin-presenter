@@ -9,3 +9,6 @@ dist-pages/
 offline_packages/
 
 reports/
+
+# Full syllable-split gold set (about 55 MB) stays out of the repository; tests use syllable_split_gold_sample.json
+tests/fixtures/syllable_split_gold.json

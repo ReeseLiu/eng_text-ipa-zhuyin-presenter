@@ -1,0 +1,478 @@
+{
+  "version": 1,
+  "description": "Curated gold syllable splits for scripts/eval_syllable_split.py (ADR 0003: (word, IPA) -> expected grapheme fragment list; spec docs/specs/batch-gold-labeling-v1.md). Scored alongside WORD_SEGMENT_HINTS in backend/pipeline.py (candidate) and the status=ok cases of tests/fixtures/syllable_split_cases.json (contract); neither of those counts as reviewed gold. Schema per entry: id (unique), word, segments (gold fragments; non-empty, ''.join(segments) must equal word, count must equal the IPA's syllable count, else invalid_gold and not scored), ipa (phone list; optional for candidates, where omitted = the production default IPA from Pipeline.process_word; required for reviewed entries), reviewed (literal true only after a teacher confirmed the split, and only together with reviewed_fingerprint = SHA-256 of canonical JSON NFC [word, ipa, segments], see scripts/batch_gold.py; a missing ipa, missing or mismatching fingerprint downgrades the entry to candidate and counts it as stale_reviewed; a single valid reviewed split wins a conflict with other sources), reviewed_fingerprint (string|null), note. Optional: reviewer, reviewed_at, suggestion_shown, sampling_stratum, sampling_rate, ipa_source (\"human\" for a teacher-added non-CMUdict IPA), audit. (Trimmed public sample; the full gold set is kept out of the repository.)",
+  "entries": [
+    {
+      "id": "sometimes:s ə m t aɪ m z",
+      "word": "sometimes",
+      "ipa": [
+        "s",
+        "ə",
+        "m",
+        "t",
+        "aɪ",
+        "m",
+        "z"
+      ],
+      "segments": [
+        "some",
+        "times"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD112568"
+    },
+    {
+      "id": "someone:s ʌ m w ʌ n",
+      "word": "someone",
+      "ipa": [
+        "s",
+        "ʌ",
+        "m",
+        "w",
+        "ʌ",
+        "n"
+      ],
+      "segments": [
+        "some",
+        "one"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD112550"
+    },
+    {
+      "id": "something:s ʌ m θ ɪ ŋ",
+      "word": "something",
+      "ipa": [
+        "s",
+        "ʌ",
+        "m",
+        "θ",
+        "ɪ",
+        "ŋ"
+      ],
+      "segments": [
+        "some",
+        "thing"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD112564"
+    },
+    {
+      "id": "somewhere:s ʌ m w ɛ ɹ",
+      "word": "somewhere",
+      "ipa": [
+        "s",
+        "ʌ",
+        "m",
+        "w",
+        "ɛ",
+        "ɹ"
+      ],
+      "segments": [
+        "some",
+        "where"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD112572"
+    },
+    {
+      "id": "headquarters:h ɛ d k w ɔ ɹ t ɚ z",
+      "word": "headquarters",
+      "ipa": [
+        "h",
+        "ɛ",
+        "d",
+        "k",
+        "w",
+        "ɔ",
+        "ɹ",
+        "t",
+        "ɚ",
+        "z"
+      ],
+      "segments": [
+        "head",
+        "quar",
+        "ters"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD053198"
+    },
+    {
+      "id": "measurement:m ɛ ʒ ɚ m ə n t",
+      "word": "measurement",
+      "ipa": [
+        "m",
+        "ɛ",
+        "ʒ",
+        "ɚ",
+        "m",
+        "ə",
+        "n",
+        "t"
+      ],
+      "segments": [
+        "mea",
+        "sure",
+        "ment"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD076633"
+    },
+    {
+      "id": "theoretical:θ i ɚ ɛ t ɪ k ə l",
+      "word": "theoretical",
+      "ipa": [
+        "θ",
+        "i",
+        "ɚ",
+        "ɛ",
+        "t",
+        "ɪ",
+        "k",
+        "ə",
+        "l"
+      ],
+      "segments": [
+        "the",
+        "o",
+        "re",
+        "ti",
+        "cal"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD120219"
+    },
+    {
+      "id": "yesterday",
+      "word": "yesterday",
+      "segments": [
+        "yes",
+        "ter",
+        "day"
+      ],
+      "reviewed": false,
+      "note": "dictionary hyphenation; the aligner's onset rule gives ye|ster|day"
+    },
+    {
+      "id": "badger",
+      "word": "badger",
+      "ipa": [
+        "b",
+        "æ",
+        "dʒ",
+        "ɚ"
+      ],
+      "segments": [
+        "bad",
+        "ger"
+      ],
+      "reviewed": false,
+      "note": "aligner reports low_confidence (bad|ger vs ba|dger)"
+    },
+    {
+      "id": "extra",
+      "word": "extra",
+      "ipa": [
+        "ɛ",
+        "k",
+        "s",
+        "t",
+        "ɹ",
+        "ə"
+      ],
+      "segments": [
+        "e",
+        "xtra"
+      ],
+      "reviewed": false,
+      "note": "aligner reports cut_inside_chunk (x -> k s spans the boundary) | v2.9 fix: segments ex·tra -> e·xtra to match the reviewed entry (rule 5); policy=old_gold_v2_9_rule_fix_20261107"
+    },
+    {
+      "id": "february",
+      "word": "february",
+      "ipa": [
+        "f",
+        "ɛ",
+        "b",
+        "j",
+        "ə",
+        "w",
+        "ɛ",
+        "ɹ",
+        "i"
+      ],
+      "segments": [
+        "fe",
+        "bru",
+        "a",
+        "ry"
+      ],
+      "reviewed": false,
+      "note": "aligner reports no_alignment for this pronunciation | v2.9 review batch 1: segments feb·ru·ar·y -> fe·bru·a·ry to match the reviewed entry; request=w80zgk9s3mxv50swmyuz8vm3"
+    },
+    {
+      "id": "abler:eɪ b ə l ɚ",
+      "word": "abler",
+      "ipa": [
+        "eɪ",
+        "b",
+        "ə",
+        "l",
+        "ɚ"
+      ],
+      "segments": [
+        "a",
+        "bl",
+        "er"
+      ],
+      "reviewed": true,
+      "reviewed_fingerprint": "8e0096eeaad4249eca14110a9ce356ce817dbc861ff1e1abe9d48880e60e9b98",
+      "reviewer": "Reese",
+      "reviewed_at": "2026-11-04T00:18:32+08:00",
+      "suggestion_shown": true,
+      "sampling_stratum": null,
+      "sampling_rate": null,
+      "ipa_source": null,
+      "note": "音節性子音或弱化母音不好對應字母，切法為推測，需人工確認。",
+      "audit": [
+        {
+          "segments": [
+            "a",
+            "bl",
+            "er"
+          ],
+          "source": "aligner_or_agent",
+          "model_id": null,
+          "score": null,
+          "abstained": false
+        }
+      ]
+    },
+    {
+      "id": "abraxa:ə b ɹ æ k s ə",
+      "word": "abraxa",
+      "ipa": [
+        "ə",
+        "b",
+        "ɹ",
+        "æ",
+        "k",
+        "s",
+        "ə"
+      ],
+      "segments": [
+        "a",
+        "bra",
+        "xa"
+      ],
+      "reviewed": true,
+      "reviewed_fingerprint": "1ab535d987aeb27af2104b9b33873c00b74dd1747dab05c6767e0569dc69fb44",
+      "reviewer": "Reese",
+      "reviewed_at": "2026-11-04T00:18:32+08:00",
+      "suggestion_shown": true,
+      "sampling_stratum": null,
+      "sampling_rate": null,
+      "ipa_source": null,
+      "note": "字母 x 對應 k s 兩個音素，切在 x 之後，x 留在前一音節。",
+      "audit": [
+        {
+          "segments": [
+            "a",
+            "brax",
+            "a"
+          ],
+          "source": "aligner_or_agent",
+          "model_id": null,
+          "score": null,
+          "abstained": false
+        }
+      ]
+    },
+    {
+      "id": "abeles:eɪ b ə l i z",
+      "word": "abeles",
+      "ipa": [
+        "eɪ",
+        "b",
+        "ə",
+        "l",
+        "i",
+        "z"
+      ],
+      "segments": [
+        "a",
+        "be",
+        "les"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000165"
+    },
+    {
+      "id": "abelow:æ b ə l oʊ",
+      "word": "abelow",
+      "ipa": [
+        "æ",
+        "b",
+        "ə",
+        "l",
+        "oʊ"
+      ],
+      "segments": [
+        "a",
+        "be",
+        "low"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000169"
+    },
+    {
+      "id": "aberle:æ b ɚ ə l",
+      "word": "aberle",
+      "ipa": [
+        "æ",
+        "b",
+        "ɚ",
+        "ə",
+        "l"
+      ],
+      "segments": [
+        "a",
+        "be",
+        "rle"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000180"
+    },
+    {
+      "id": "abrams's:eɪ b ɹ ə m z ɪ z",
+      "word": "abrams's",
+      "ipa": [
+        "eɪ",
+        "b",
+        "ɹ",
+        "ə",
+        "m",
+        "z",
+        "ɪ",
+        "z"
+      ],
+      "segments": [
+        "a",
+        "bram",
+        "s's"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000323"
+    },
+    {
+      "id": "acero:ə s ɛ ɹ oʊ",
+      "word": "acero",
+      "ipa": [
+        "ə",
+        "s",
+        "ɛ",
+        "ɹ",
+        "oʊ"
+      ],
+      "segments": [
+        "a",
+        "ce",
+        "ro"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000679"
+    },
+    {
+      "id": "actress's:æ k t ɹ ə s ɪ z",
+      "word": "actress's",
+      "ipa": [
+        "æ",
+        "k",
+        "t",
+        "ɹ",
+        "ə",
+        "s",
+        "ɪ",
+        "z"
+      ],
+      "segments": [
+        "ac",
+        "tress",
+        "'s"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD000904"
+    },
+    {
+      "id": "axioms:æ k s i ə m z",
+      "word": "axioms",
+      "ipa": [
+        "æ",
+        "k",
+        "s",
+        "i",
+        "ə",
+        "m",
+        "z"
+      ],
+      "segments": [
+        "a",
+        "xi",
+        "oms"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD007180"
+    },
+    {
+      "id": "axis:æ k s ə s",
+      "word": "axis",
+      "ipa": [
+        "æ",
+        "k",
+        "s",
+        "ə",
+        "s"
+      ],
+      "segments": [
+        "a",
+        "xis"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD007181"
+    },
+    {
+      "id": "axle:æ k s ə l",
+      "word": "axle",
+      "ipa": [
+        "æ",
+        "k",
+        "s",
+        "ə",
+        "l"
+      ],
+      "segments": [
+        "a",
+        "xle"
+      ],
+      "reviewed": false,
+      "reviewed_fingerprint": null,
+      "note": "accepted_by_policy=pronunciation_rule_v2_9_candidates_v7_20261107; row_id=FD007182"
+    }
+  ]
+}

@@ -7,6 +7,8 @@ from io import StringIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# The full gold set is not published; tests run against a trimmed sample of it.
+SAMPLE_GOLD = ROOT / "tests" / "fixtures" / "syllable_split_gold_sample.json"
 
 
 def load_eval():
@@ -23,7 +25,7 @@ class SyllableSplitEvalTest(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_eval()
         # "synapse" keeps a missing_gold text item: its only CMUdict IPA (s ɪ æ p s) drops the n, so it is unlikely ever to get gold.
-        cls.report = cls.module.evaluate(texts=["The story was read aloud by a synapse."])
+        cls.report = cls.module.evaluate(texts=["The story was read aloud by a synapse."], curated_path=SAMPLE_GOLD)
 
     def test_counts_add_up(self):
         overall = self.report["overall"]
@@ -96,7 +98,7 @@ class SyllableSplitEvalTest(unittest.TestCase):
             out = Path(tmp) / "report.json"
             stdout = StringIO()
             with redirect_stdout(stdout):
-                self.assertEqual(self.module.main(["--out", str(out)]), 0)
+                self.assertEqual(self.module.main(["--gold", str(SAMPLE_GOLD), "--out", str(out)]), 0)
             self.assertIn("exact:", stdout.getvalue())
             report = json.loads(out.read_text(encoding="utf-8"))
             # Pinned literally: bumping the report format must be a deliberate test change too.
