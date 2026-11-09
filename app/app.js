@@ -1802,6 +1802,8 @@ async function exportJson() {
   }
   setStatus("準備 JSON 匯出...");
   try {
+    // Syllable text splits come from the align table; without it the export still works, unsplit.
+    await ensureAlignTableLoaded().catch((error) => console.warn("Align table unavailable for export:", error));
     const result = await postJson("/api/export_json", { payload: state.payload });
     const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);

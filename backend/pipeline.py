@@ -5,8 +5,9 @@ from __future__ import annotations
 import csv
 import json
 import re
+import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .phoneme_core.display_mapping import (
     build_display_bundle,
@@ -291,7 +292,29 @@ def _group_tokens_by_syllable(tokens: list[str], syllable_count: int | None) -> 
     return groups
 
 
-def _split_surface_text_for_rows(surface_text: str, row_count: int) -> list[str]:
+def _suggested_segments_for_rows(
+    core_word: str,
+    row_count: int,
+    suggest_segments: Callable[[str], list[str] | None] | None,
+) -> list[str] | None:
+    if suggest_segments is None:
+        return None
+    try:
+        segments = suggest_segments(core_word)
+    except ValueError:
+        return None
+    if not isinstance(segments, list) or len(segments) != row_count:
+        return None
+    if not all(isinstance(part, str) and part for part in segments) or "".join(segments) != core_word:
+        return None
+    return segments
+
+
+def _split_surface_text_for_rows(
+    surface_text: str,
+    row_count: int,
+    suggest_segments: Callable[[str], list[str] | None] | None = None,
+) -> list[str]:
     if row_count <= 0:
         return []
 
@@ -308,6 +331,8 @@ def _split_surface_text_for_rows(surface_text: str, row_count: int) -> list[str]
     core_word, punct = matched.groups()
     hinted = WORD_SEGMENT_HINTS.get(core_word.lower())
     if not isinstance(hinted, list) or len(hinted) != row_count:
+        hinted = _suggested_segments_for_rows(core_word, row_count, suggest_segments)
+    if hinted is None:
         return [trimmed, *([""] * (row_count - 1))]
 
     built: list[str] = []
@@ -411,12 +436,18 @@ def _build_phonetic_row_from_slots(
 
         if not merged_numbers:
             continue
-        if len(merged_numbers) > 1 or parsed_token_count > 1:
-            row.append(merged_numbers)
-        else:
-            row.append(merged_numbers[0])
+        _append_slot_numbers(row, slot, merged_numbers)
 
     return row
+
+
+def _append_slot_numbers(row: list[Any], slot: str, numbers: list[int]) -> None:
+    # The intonation site keeps each consonant on its own card and reserves nested
+    # composites for vowels (diphthongs), so consonant slots are always flattened.
+    if slot in {"C1", "C2"} or len(numbers) == 1:
+        row.extend(numbers)
+    else:
+        row.append(numbers)
 
 
 def _build_manual_phonetic_rows(
@@ -509,14 +540,6 @@ def _build_phonetic_rows(
         return fallback_rows
 
     syllable_map: dict[int, dict[str, list[int]]] = {}
-    slot_counts: dict[int, dict[str, int]] = {}
-    for detail in token_details:
-        safe_detail = detail if isinstance(detail, dict) else {}
-        slot = _normalize_syllable_slot(safe_detail.get("syllable_slot"))
-        syllable_index = _normalize_syllable_index(safe_detail.get("syllable_index"))
-        counts = slot_counts.setdefault(syllable_index, {"C1": 0, "V": 0, "C2": 0})
-        counts[slot] = counts.get(slot, 0) + 1
-
     for idx, token in enumerate(tokens):
         if not token:
             continue
@@ -538,29 +561,12 @@ def _build_phonetic_rows(
             numbers = bucket[slot]
             if not numbers:
                 continue
-            is_composite_slot = slot in {"C1", "C2"} and slot_counts.get(syllable_index, {}).get(slot, 0) > 1
-            if len(numbers) > 1 or is_composite_slot:
-                row.append(numbers)
-            else:
-                row.append(numbers[0])
+            _append_slot_numbers(row, slot, numbers)
 
         if row:
             output_rows.append(row)
 
     return output_rows
-
-
-def _token_kk_phonetic(word: dict[str, Any]) -> str:
-    display = word.get("display") if isinstance(word, dict) else {}
-    if isinstance(display, dict):
-        kk_tokens = display.get("kk")
-        if isinstance(kk_tokens, list):
-            return "".join(str(token or "") for token in kk_tokens)
-
-    ipa_tokens = word.get("ipa") if isinstance(word, dict) else None
-    if isinstance(ipa_tokens, list):
-        return "".join(str(token or "") for token in ipa_tokens)
-    return ""
 
 
 def _token_id_for(sentence_id: str, word_group_index: int, token_index: int, token: dict[str, Any]) -> str:
@@ -592,14 +598,13 @@ def _finalize_jason_token(sentence_id: str, word_group_index: int, token_index: 
     safe_token["text"] = str(safe_token.get("text") or "")
     if not isinstance(safe_token.get("phonetic"), list):
         safe_token["phonetic"] = []
+    # Unset intonation fields stay null, as the intonation site leaves them for the teacher to mark.
     tone_level = safe_token.get("toneLevel")
-    safe_token["toneLevel"] = tone_level if isinstance(tone_level, int) else 0
+    safe_token["toneLevel"] = tone_level if isinstance(tone_level, int) else None
     tone_style = str(safe_token.get("toneStyle") or "").strip()
-    safe_token["toneStyle"] = tone_style or "solid-short"
+    safe_token["toneStyle"] = tone_style or None
     importance = str(safe_token.get("importance") or "").strip()
-    if importance not in {"important", "not-important"}:
-        importance = "important" if safe_token["phonetic"] else "not-important"
-    safe_token["importance"] = importance
+    safe_token["importance"] = importance if importance in {"important", "not-important"} else None
     explicit_token_id = str(safe_token.get("tokenId") or "").strip()
     safe_token["tokenId"] = explicit_token_id or _token_id_for(sentence_id, word_group_index, token_index, safe_token)
     return safe_token
@@ -609,8 +614,8 @@ def _blank_jason_token(text: str) -> dict[str, Any]:
     return {
         "tokenId": "",
         "text": str(text or ""),
-        "toneLevel": 0,
-        "toneStyle": "solid-short",
+        "toneLevel": None,
+        "toneStyle": None,
         "phonetic": [],
         "importance": None,
         "reason": "",
@@ -626,6 +631,7 @@ def _word_to_jason_tokens(
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
     strict_surface_overrides: dict[str, dict[str, Any]] | None = None,
+    suggest_segments: Callable[[str, list[str]], list[str] | None] | None = None,
 ) -> list[dict[str, Any]]:
     display = word.get("display") if isinstance(word, dict) else {}
     display_zhuyin = display.get("zhuyin_plus") if isinstance(display, dict) else []
@@ -633,7 +639,6 @@ def _word_to_jason_tokens(
     token_details = word.get("token_details") if isinstance(word, dict) else []
     details = token_details if isinstance(token_details, list) else []
     fallback_syllable_count = _fallback_syllable_count_for_word(word, surface_text)
-    kk_phonetic = _token_kk_phonetic(word)
 
     manual_rows = _build_manual_phonetic_rows(word, surface_text, phonetic_number_map, sorted_symbols)
     if manual_rows:
@@ -641,7 +646,6 @@ def _word_to_jason_tokens(
         for idx, row in enumerate(manual_rows):
             token = _blank_jason_token(str(row.get("text") or (surface_text if idx == 0 else "")))
             token["phonetic"] = row.get("phonetic") if isinstance(row.get("phonetic"), list) else []
-            token["kkPhonetic"] = kk_phonetic
             tokens.append(token)
         return tokens
 
@@ -661,16 +665,19 @@ def _word_to_jason_tokens(
     )
 
     if not phonetic_rows:
-        token = _blank_jason_token(surface_text)
-        token["kkPhonetic"] = kk_phonetic
-        return [token]
+        return [_blank_jason_token(surface_text)]
+
+    ipa_tokens = word.get("ipa") if isinstance(word, dict) and isinstance(word.get("ipa"), list) else []
+    word_suggester = None
+    if suggest_segments is not None and ipa_tokens:
+        def word_suggester(core_word: str) -> list[str] | None:
+            return suggest_segments(core_word, ipa_tokens)
 
     tokens: list[dict[str, Any]] = []
-    split_texts = _split_surface_text_for_rows(surface_text, len(phonetic_rows))
+    split_texts = _split_surface_text_for_rows(surface_text, len(phonetic_rows), word_suggester)
     for idx, row in enumerate(phonetic_rows):
         token = _blank_jason_token(split_texts[idx] if idx < len(split_texts) else (surface_text if idx == 0 else ""))
         token["phonetic"] = row
-        token["kkPhonetic"] = kk_phonetic
         tokens.append(token)
     return tokens
 
@@ -689,14 +696,21 @@ def _sentence_words(sentence: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in raw_words if isinstance(item, dict)]
 
 
+def _new_sentence_id() -> str:
+    # Same shape as the intonation site's own ids; sequential ids such as "1" would collide
+    # with sentences from earlier imports.
+    return f"sen_{secrets.token_hex(12)}"
+
+
 def _convert_sentence_to_jason(
     sentence: dict[str, Any],
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
+    suggest_segments: Callable[[str, list[str]], list[str] | None] | None = None,
 ) -> dict[str, Any]:
     sentence_text = str(sentence.get("text") or sentence.get("sentence") or "")
     strict_sentence_key = _normalized_sentence_key(sentence_text)
-    sentence_id = STRICT_SENTENCE_ID_OVERRIDES.get(strict_sentence_key) or str(sentence.get("sentence_id") or sentence.get("sentenceId") or "")
+    sentence_id = STRICT_SENTENCE_ID_OVERRIDES.get(strict_sentence_key) or _new_sentence_id()
     strict_surface_overrides = JASON_STRICT_SURFACE_OVERRIDES if strict_sentence_key in STRICT_SENTENCE_ID_OVERRIDES else None
     surface_tokens = _sentence_surface_tokens(sentence_text)
     source_words = _sentence_words(sentence)
@@ -712,6 +726,7 @@ def _convert_sentence_to_jason(
                     phonetic_number_map,
                     sorted_symbols,
                     strict_surface_overrides=strict_surface_overrides,
+                    suggest_segments=suggest_segments,
                 )
             )
             source_idx += 1
@@ -728,6 +743,7 @@ def _convert_sentence_to_jason(
                 phonetic_number_map,
                 sorted_symbols,
                 strict_surface_overrides=strict_surface_overrides,
+                suggest_segments=suggest_segments,
             )
         )
 
@@ -754,12 +770,13 @@ def export_payload_to_jason(
     payload: dict[str, Any],
     phonetic_number_map: dict[str, int],
     sorted_symbols: list[str],
+    suggest_segments: Callable[[str, list[str]], list[str] | None] | None = None,
 ) -> list[dict[str, Any]]:
     sentences = payload.get("sentences")
     if not isinstance(sentences, list):
         return []
     return [
-        _convert_sentence_to_jason(sentence, phonetic_number_map, sorted_symbols)
+        _convert_sentence_to_jason(sentence, phonetic_number_map, sorted_symbols, suggest_segments)
         for sentence in sentences
         if isinstance(sentence, dict)
     ]
@@ -886,7 +903,16 @@ class Pipeline:
 
     def export_json(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         body = payload if isinstance(payload, dict) else {}
-        return export_payload_to_jason(body, self.phonetic_number_map, self.phonetic_number_symbols)
+        return export_payload_to_jason(
+            body,
+            self.phonetic_number_map,
+            self.phonetic_number_symbols,
+            self._export_segments,
+        )
+
+    def _export_segments(self, word_text: str, ipa_tokens: list[str]) -> list[str] | None:
+        result = self.suggest_syllable_split(word_text, ipa_tokens)
+        return result.get("segments") if result.get("status") == "ok" else None
 
     def get_display_table(self) -> dict[str, dict[str, str]]:
         output: dict[str, dict[str, str]] = {}

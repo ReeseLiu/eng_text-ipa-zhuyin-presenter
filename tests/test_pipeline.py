@@ -52,38 +52,49 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(exported), 1)
 
         sentence = exported[0]
-        self.assertIn("sentenceId", sentence)
+        self.assertRegex(sentence["sentenceId"], r"^sen_[0-9a-f]{24}$")
         self.assertIn("words", sentence)
         self.assertEqual(sentence["sentence"], "I'm here.")
 
         first_token = sentence["words"][0][0]
         self.assertEqual(first_token["text"], "I'm")
         self.assertEqual(first_token["phonetic"], [51, 7])
-        self.assertEqual(first_token["toneLevel"], 0)
-        self.assertEqual(first_token["toneStyle"], "solid-short")
-        self.assertEqual(first_token["importance"], "important")
+        self.assertIsNone(first_token["toneLevel"])
+        self.assertIsNone(first_token["toneStyle"])
+        self.assertIsNone(first_token["importance"])
+        self.assertEqual(first_token["kkPhonetic"], "")
         self.assertTrue(str(first_token["tokenId"]).startswith("tok_"))
         self.assertEqual(first_token["reason"], "")
 
-    def test_export_json_wraps_multi_consonant_slots(self):
-        payload = pipeline.process_text("break chance.", "unit")
+    def test_export_json_sentence_ids_do_not_repeat(self):
+        payload = pipeline.process_text("One. Two.", "unit")
+        first = [sentence["sentenceId"] for sentence in pipeline.export_json(payload)]
+        second = [sentence["sentenceId"] for sentence in pipeline.export_json(payload)]
+        self.assertEqual(len(set(first + second)), 4)
+
+    def test_export_json_flattens_multi_consonant_slots(self):
+        payload = pipeline.process_text("break chance and.", "unit")
         exported = pipeline.export_json(payload)
         words = exported[0]["words"]
 
         break_token = words[0][0]
         self.assertEqual(break_token["text"], "break")
-        self.assertEqual(break_token["phonetic"], [[1, 81], 48, 25])
+        self.assertEqual(break_token["phonetic"], [1, 81, 48, 25])
 
         chance_token = words[1][0]
-        self.assertEqual(chance_token["text"], "chance.")
-        self.assertEqual(chance_token["phonetic"], [30, 49, [18, 38]])
+        self.assertEqual(chance_token["text"], "chance")
+        self.assertEqual(chance_token["phonetic"], [30, 49, 18, 38])
 
-    def test_export_json_wraps_composite_slot_after_merge(self):
+        # Matches the intonation site's own export of "and".
+        and_token = words[2][0]
+        self.assertEqual(and_token["phonetic"], [44, 18, 16])
+
+    def test_export_json_flattens_composite_slot_after_merge(self):
         payload = pipeline.process_text("dream.", "unit")
         exported = pipeline.export_json(payload)
         token = exported[0]["words"][0][0]
         self.assertEqual(token["text"], "dream.")
-        self.assertEqual(token["phonetic"], [[79], 66, 7])
+        self.assertEqual(token["phonetic"], [79, 66, 7])
 
     def test_missing_word_record_has_syllable_guess(self):
         word = pipeline._record_to_word(
@@ -134,9 +145,7 @@ class PipelineTest(unittest.TestCase):
         word_group = exported[0]["words"][0]
 
         self.assertEqual(len(word_group), 3)
-        self.assertEqual(word_group[0]["text"], "banana.")
-        self.assertEqual(word_group[1]["text"], "")
-        self.assertEqual(word_group[2]["text"], "")
+        self.assertEqual([token["text"] for token in word_group], ["ba", "na", "na."])
         self.assertEqual(word_group[0]["phonetic"], [1, 44])
         self.assertEqual(word_group[1]["phonetic"], [12, 49])
         self.assertEqual(word_group[2]["phonetic"], [12, 44])
@@ -169,7 +178,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(word_group[0]["text"], "some")
         self.assertEqual(word_group[1]["text"], "times.")
         self.assertEqual(word_group[0]["phonetic"], [38, 44, 7])
-        self.assertEqual(word_group[1]["phonetic"], [15, 51, [7, 39]])
+        self.assertEqual(word_group[1]["phonetic"], [15, 51, 7, 39])
 
     def test_export_json_manual_syllables_parse_comma_delimited_slot_text(self):
         payload = pipeline.process_text("sometimes.", "unit")
@@ -199,7 +208,21 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(word_group[0]["text"], "some")
         self.assertEqual(word_group[1]["text"], "times.")
         self.assertEqual(word_group[0]["phonetic"], [38, 44, 7])
-        self.assertEqual(word_group[1]["phonetic"], [15, 51, [7, 39]])
+        self.assertEqual(word_group[1]["phonetic"], [15, 51, 7, 39])
+
+    def test_export_json_splits_capitalized_word_by_suggestion(self):
+        payload = pipeline.process_text("Henry and Mudge", "unit")
+        words = pipeline.export_json(payload)[0]["words"]
+        self.assertEqual([token["text"] for token in words[0]], ["Hen", "ry"])
+        self.assertEqual([token["phonetic"] for token in words[0]], [[23, 45, 18], [81, 66]])
+
+    def test_export_json_keeps_unsplit_text_without_suggestion(self):
+        exported = pipeline_module.export_payload_to_jason(
+            pipeline.process_text("banana.", "unit"),
+            pipeline.phonetic_number_map,
+            pipeline.phonetic_number_symbols,
+        )
+        self.assertEqual([token["text"] for token in exported[0]["words"][0]], ["banana.", "", ""])
 
     def test_export_json_known_word_split_and_metadata(self):
         payload = pipeline.process_text("headquarters,", "unit")
@@ -210,13 +233,12 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual([token["text"] for token in word_group], ["head", "quar", "ters,"])
         # /kw/ is a legal onset, so /k/ opens "quar" instead of closing "head".
         self.assertEqual(word_group[0]["phonetic"], [23, 45, 16])
-        self.assertEqual(word_group[1]["phonetic"], [[22, 60], 71])
+        self.assertEqual(word_group[1]["phonetic"], [22, 60, 71])
         self.assertEqual(word_group[2]["phonetic"], [15, 47, 39])
-        self.assertEqual(word_group[0]["kkPhonetic"], word_group[1]["kkPhonetic"])
-        self.assertEqual(word_group[0]["kkPhonetic"], word_group[2]["kkPhonetic"])
-        self.assertEqual(word_group[0]["toneStyle"], "solid-short")
-        self.assertEqual(word_group[1]["toneLevel"], 0)
-        self.assertEqual(word_group[2]["importance"], "important")
+        self.assertEqual({token["kkPhonetic"] for token in word_group}, {""})
+        self.assertIsNone(word_group[0]["toneStyle"])
+        self.assertIsNone(word_group[1]["toneLevel"])
+        self.assertIsNone(word_group[2]["importance"])
         self.assertTrue(str(word_group[0]["tokenId"]).startswith("tok_"))
 
     def test_export_json_matches_strict_override_sentence(self):

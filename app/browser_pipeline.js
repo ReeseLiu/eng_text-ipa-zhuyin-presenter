@@ -1246,7 +1246,29 @@
     return groups;
   }
 
-  function splitSurfaceTextForRows(surfaceText, rowCount) {
+  function suggestedSegmentsForRows(coreWord, rowCount, suggestSegments) {
+    if (typeof suggestSegments !== "function") {
+      return null;
+    }
+    let segments;
+    try {
+      segments = suggestSegments(coreWord);
+    } catch (error) {
+      if (error?.code === "bad_request") {
+        return null;
+      }
+      throw error;
+    }
+    if (!Array.isArray(segments) || segments.length !== rowCount) {
+      return null;
+    }
+    if (!segments.every((part) => typeof part === "string" && part) || segments.join("") !== coreWord) {
+      return null;
+    }
+    return segments;
+  }
+
+  function splitSurfaceTextForRows(surfaceText, rowCount, suggestSegments = null) {
     const safeCount = Number.isInteger(rowCount) ? rowCount : 0;
     if (safeCount <= 0) {
       return [];
@@ -1266,8 +1288,11 @@
     }
 
     const [, coreWord, punct] = matched;
-    const hinted = WORD_SEGMENT_HINTS[String(coreWord || "").toLowerCase()];
+    let hinted = WORD_SEGMENT_HINTS[String(coreWord || "").toLowerCase()];
     if (!Array.isArray(hinted) || hinted.length !== safeCount) {
+      hinted = suggestedSegmentsForRows(coreWord, safeCount, suggestSegments);
+    }
+    if (!hinted) {
       return [trimmed, ...Array.from({ length: safeCount - 1 }, () => "")];
     }
 
@@ -1385,13 +1410,19 @@
       if (merged.length === 0) {
         return;
       }
-      if (merged.length > 1 || parsedTokenCount > 1) {
-        row.push(merged);
-      } else {
-        row.push(merged[0]);
-      }
+      appendSlotNumbers(row, slot, merged);
     });
     return row;
+  }
+
+  // The intonation site keeps each consonant on its own card and reserves nested
+  // composites for vowels (diphthongs), so consonant slots are always flattened.
+  function appendSlotNumbers(row, slot, numbers) {
+    if (slot === "C1" || slot === "C2" || numbers.length === 1) {
+      row.push(...numbers);
+    } else {
+      row.push(numbers);
+    }
   }
 
   function buildManualPhoneticRows(word, surfaceText, phoneticNumberTable, sortedSymbols) {
@@ -1484,18 +1515,6 @@
     }
 
     const syllableMap = new Map();
-    const slotCounts = new Map();
-    tokenDetails.forEach((detailRaw) => {
-      const detail = detailRaw && typeof detailRaw === "object" ? detailRaw : {};
-      const slot = normalizeSyllableSlot(detail.syllable_slot);
-      const syllableIndex = normalizeSyllableIndex(detail.syllable_index);
-      if (!slotCounts.has(syllableIndex)) {
-        slotCounts.set(syllableIndex, { C1: 0, V: 0, C2: 0 });
-      }
-      const counts = slotCounts.get(syllableIndex);
-      counts[slot] = Number(counts[slot] || 0) + 1;
-    });
-
     tokens.forEach((token, idx) => {
       if (!token) {
         return;
@@ -1525,9 +1544,7 @@
         if (numbers.length === 0) {
           return;
         }
-        const compositeSlot = (slot === "C1" || slot === "C2")
-          && Number(slotCounts.get(syllableIndex)?.[slot] || 0) > 1;
-        row.push(numbers.length > 1 || compositeSlot ? numbers : numbers[0]);
+        appendSlotNumbers(row, slot, numbers);
       });
 
       if (row.length > 0) {
@@ -1536,16 +1553,6 @@
     });
 
     return outputRows;
-  }
-
-  function tokenKkPhonetic(word) {
-    const display = word?.display && typeof word.display === "object" ? word.display : {};
-    const kkTokens = Array.isArray(display.kk) ? display.kk : null;
-    if (kkTokens) {
-      return kkTokens.map((token) => String(token || "")).join("");
-    }
-    const ipaTokens = Array.isArray(word?.ipa) ? word.ipa : [];
-    return ipaTokens.map((token) => String(token || "")).join("");
   }
 
   function stableHash16(value) {
@@ -1580,13 +1587,12 @@
     if (!Array.isArray(safeToken.phonetic)) {
       safeToken.phonetic = [];
     }
-    safeToken.toneLevel = Number.isInteger(safeToken.toneLevel) ? safeToken.toneLevel : 0;
+    // Unset intonation fields stay null, as the intonation site leaves them for the teacher to mark.
+    safeToken.toneLevel = Number.isInteger(safeToken.toneLevel) ? safeToken.toneLevel : null;
     const toneStyle = String(safeToken.toneStyle || "").trim();
-    safeToken.toneStyle = toneStyle || "solid-short";
+    safeToken.toneStyle = toneStyle || null;
     const importance = String(safeToken.importance || "").trim();
-    safeToken.importance = (importance === "important" || importance === "not-important")
-      ? importance
-      : (safeToken.phonetic.length > 0 ? "important" : "not-important");
+    safeToken.importance = (importance === "important" || importance === "not-important") ? importance : null;
     const explicitTokenId = String(safeToken.tokenId || "").trim();
     safeToken.tokenId = explicitTokenId || tokenIdFor(sentenceId, wordGroupIndex, tokenIndex, safeToken);
     return safeToken;
@@ -1596,8 +1602,8 @@
     return {
       tokenId: "",
       text: String(text || ""),
-      toneLevel: 0,
-      toneStyle: "solid-short",
+      toneLevel: null,
+      toneStyle: null,
       phonetic: [],
       importance: null,
       reason: "",
@@ -1607,19 +1613,24 @@
     };
   }
 
-  function wordToJasonTokens(word, surfaceText, phoneticNumberTable, sortedSymbols, strictSurfaceOverrides = null) {
+  function wordToJasonTokens(
+    word,
+    surfaceText,
+    phoneticNumberTable,
+    sortedSymbols,
+    strictSurfaceOverrides = null,
+    suggestSegments = null,
+  ) {
     const display = word?.display && typeof word.display === "object" ? word.display : {};
     const zhuyinTokens = Array.isArray(display.zhuyin_plus) ? display.zhuyin_plus : [];
     const details = Array.isArray(word?.token_details) ? word.token_details : [];
     const fallbackSyllableCount = fallbackSyllableCountForWord(word, surfaceText);
-    const kkPhonetic = tokenKkPhonetic(word);
 
     const manualRows = buildManualPhoneticRows(word, surfaceText, phoneticNumberTable, sortedSymbols);
     if (manualRows.length > 0) {
       return manualRows.map((row, idx) => {
         const token = blankJasonToken(String(row.text || (idx === 0 ? surfaceText : "")));
         token.phonetic = Array.isArray(row.phonetic) ? row.phonetic : [];
-        token.kkPhonetic = kkPhonetic;
         return token;
       });
     }
@@ -1641,16 +1652,17 @@
     );
 
     if (phoneticRows.length === 0) {
-      const token = blankJasonToken(surfaceText);
-      token.kkPhonetic = kkPhonetic;
-      return [token];
+      return [blankJasonToken(surfaceText)];
     }
 
-    const splitTexts = splitSurfaceTextForRows(surfaceText, phoneticRows.length);
+    const ipaTokens = Array.isArray(word?.ipa) ? word.ipa : [];
+    const wordSuggester = typeof suggestSegments === "function" && ipaTokens.length > 0
+      ? (coreWord) => suggestSegments(coreWord, ipaTokens)
+      : null;
+    const splitTexts = splitSurfaceTextForRows(surfaceText, phoneticRows.length, wordSuggester);
     return phoneticRows.map((row, idx) => {
       const token = blankJasonToken(splitTexts[idx] || (idx === 0 ? surfaceText : ""));
       token.phonetic = row;
-      token.kkPhonetic = kkPhonetic;
       return token;
     });
   }
@@ -1668,10 +1680,24 @@
     return rawWords.filter((item) => item && typeof item === "object" && !Array.isArray(item));
   }
 
-  function convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols) {
+  // Same shape as the intonation site's own ids; sequential ids such as "1" would collide
+  // with sentences from earlier imports.
+  function newSentenceId() {
+    const bytes = new Uint8Array(12);
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      bytes.forEach((_, idx) => {
+        bytes[idx] = Math.floor(Math.random() * 256);
+      });
+    }
+    return `sen_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  function convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols, suggestSegments = null) {
     const sentenceText = String(sentence?.text || sentence?.sentence || "");
     const sentenceKey = normalizeSentenceKey(sentenceText);
-    const sentenceId = STRICT_SENTENCE_ID_OVERRIDES[sentenceKey] || String(sentence?.sentence_id || sentence?.sentenceId || "");
+    const sentenceId = STRICT_SENTENCE_ID_OVERRIDES[sentenceKey] || newSentenceId();
     const strictSurfaceOverrides = Object.prototype.hasOwnProperty.call(STRICT_SENTENCE_ID_OVERRIDES, sentenceKey)
       ? JASON_STRICT_SURFACE_OVERRIDES
       : null;
@@ -1682,7 +1708,14 @@
 
     surfaceTokens.forEach((rawToken) => {
       if (normalizeWordToken(rawToken) && sourceIdx < sourceWords.length) {
-        words.push(wordToJasonTokens(sourceWords[sourceIdx], rawToken, phoneticNumberTable, sortedSymbols, strictSurfaceOverrides));
+        words.push(wordToJasonTokens(
+          sourceWords[sourceIdx],
+          rawToken,
+          phoneticNumberTable,
+          sortedSymbols,
+          strictSurfaceOverrides,
+          suggestSegments,
+        ));
         sourceIdx += 1;
         return;
       }
@@ -1699,6 +1732,7 @@
           phoneticNumberTable,
           sortedSymbols,
           strictSurfaceOverrides,
+          suggestSegments,
         ),
       );
     }
@@ -1725,11 +1759,11 @@
     };
   }
 
-  function exportPayloadToJason(payload, phoneticNumberTable, sortedSymbols) {
+  function exportPayloadToJason(payload, phoneticNumberTable, sortedSymbols, suggestSegments = null) {
     const sentences = Array.isArray(payload?.sentences) ? payload.sentences : [];
     return sentences
       .filter((sentence) => sentence && typeof sentence === "object")
-      .map((sentence) => convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols));
+      .map((sentence) => convertSentenceToJason(sentence, phoneticNumberTable, sortedSymbols, suggestSegments));
   }
 
   function normalizeIpaTokens(value) {
@@ -1941,7 +1975,14 @@
 
     exportJson(payload) {
       const output = payload && typeof payload === "object" ? payload : {};
-      return exportPayloadToJason(output, this.phoneticNumberTable, this.phoneticNumberSymbols);
+      // Without the align table (it loads lazily), words fall back to the unsplit text.
+      const suggestSegments = this.hasAlignTable()
+        ? (wordText, ipaTokens) => {
+          const result = this.suggestSyllableSplit(wordText, ipaTokens);
+          return result?.status === "ok" ? result.segments : null;
+        }
+        : null;
+      return exportPayloadToJason(output, this.phoneticNumberTable, this.phoneticNumberSymbols, suggestSegments);
     }
 
     getDisplayTable() {
