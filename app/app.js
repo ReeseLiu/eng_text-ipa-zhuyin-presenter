@@ -656,8 +656,13 @@ function normalizeManualSyllables(rawRows, wordText = "") {
         text: String(row.text || "").trim(),
         slots,
       };
-    })
-    .filter((row) => row.text || row.slots.C1.length > 0 || row.slots.V.length > 0 || row.slots.C2.length > 0);
+    });
+
+  // Blank rows are kept (a syllable added by hand starts empty) as long as some row has content.
+  const hasContent = rows.some((row) => row.text || row.slots.C1.length > 0 || row.slots.V.length > 0 || row.slots.C2.length > 0);
+  if (!hasContent) {
+    return [];
+  }
 
   if (rows.length > 0 && !rows.some((row) => row.text)) {
     rows[0].text = String(wordText || "").trim();
@@ -692,10 +697,19 @@ function buildAutoManualSyllables(word) {
 
 function resolveManualSyllables(word) {
   const normalized = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
-  if (normalized.length > 0) {
-    return normalized;
+  const rows = normalized.length > 0 ? normalized : buildAutoManualSyllables(word);
+  // The table never has fewer rows than the syllable count set by hand, even when the word has too
+  // few phonetic tokens to fill them (one-token acronyms such as "AI"): the teacher types the rest.
+  const manualCount = normalizePositiveInt(word?.manual_syllable_count);
+  const wanted = Math.max(1, manualCount ?? 0);
+  if (rows.length >= wanted) {
+    return rows;
   }
-  return buildAutoManualSyllables(word);
+  const padded = resizeManualSyllables(rows, wanted);
+  if (rows.length === 0) {
+    padded[0].text = String(word?.word || "").trim();
+  }
+  return padded;
 }
 
 const SYLLABLE_SPLIT_FAILURE_LABEL = {
@@ -1198,14 +1212,29 @@ function hasUsableTokenDetails(word) {
   return details.length > 0 && details.length === ipaTokens.length;
 }
 
+// Always offered: a dictionary entry can be wrong about the syllable count (acronyms such as "AI").
 function shouldShowSyllableControl(word) {
-  if (normalizePositiveInt(word?.manual_syllable_count) !== null) {
-    return true;
+  return Boolean(word) && typeof word === "object";
+}
+
+// Grows or shrinks a syllable table to `count` rows; extra rows merge into the last kept row.
+function resizeManualSyllables(rows, count) {
+  const next = rows.map((row) => ({
+    text: row.text,
+    slots: { C1: [...row.slots.C1], V: [...row.slots.V], C2: [...row.slots.C2] },
+  }));
+  while (next.length < count) {
+    next.push({ text: "", slots: { C1: [], V: [], C2: [] } });
   }
-  if (String(word?.g2p_source || "") === "missing") {
-    return true;
+  while (next.length > count && next.length > 1) {
+    const extra = next.pop();
+    const last = next[next.length - 1];
+    last.text = `${last.text}${extra.text}`;
+    PRESENTATION_SLOT_ORDER.forEach((slot) => {
+      last.slots[slot].push(...extra.slots[slot]);
+    });
   }
-  return !hasUsableTokenDetails(word);
+  return next;
 }
 
 function groupTokensBySyllable(tokens, syllableCount) {
@@ -1261,6 +1290,11 @@ function updateWordManualSyllableCount(sentenceIdx, wordIdx, rawValue) {
     setStatus(`${word.word || "word"} 已改回自動音節猜測。`);
   } else {
     nextWord.manual_syllable_count = parsed;
+    const hasSavedRows = normalizeManualSyllables(word.manual_syllables, String(word.word || "")).length > 0;
+    if (hasSavedRows || hasUsableTokenDetails(word)) {
+      // Token details fix the syllable count, so the count only takes effect through the syllable table.
+      nextWord.manual_syllables = resizeManualSyllables(resolveManualSyllables(word), parsed);
+    }
     setStatus(`${word.word || "word"} 音節數已設為 ${parsed}。`);
   }
 
@@ -1492,7 +1526,11 @@ function normalizePresentationColumnSlots(column) {
 }
 
 function buildPresentationWordLayout(word) {
-  const manualSyllables = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
+  const savedSyllables = normalizeManualSyllables(word?.manual_syllables, String(word?.word || ""));
+  // In Improved Zhuyin mode the editor's table (saved rows, else the automatic rows) is the layout.
+  const manualSyllables = savedSyllables.length > 0 || state.displaySystem !== "zhuyin_plus"
+    ? savedSyllables
+    : buildAutoManualSyllables(word);
   if (manualSyllables.length > 0) {
     const columns = manualSyllables.map((row) => normalizePresentationColumnSlots({
       slots: {
@@ -1598,15 +1636,11 @@ function estimatePresentationWordTextWidth(wordText, scale = 1) {
 
 function estimatePresentationColumnWidth(column, scale = 1) {
   const safeColumn = column && typeof column === "object" ? column : {};
-  const slotTexts = PRESENTATION_SLOT_ORDER.map((slot) => {
+  const widest = PRESENTATION_SLOT_ORDER.reduce((maxWidth, slot) => {
     const tokens = Array.isArray(safeColumn?.slots?.[slot]) ? safeColumn.slots[slot] : [];
-    if (tokens.length === 0) {
-      return "-";
-    }
-    return tokens.map((token) => String(token || "")).join(" ");
-  });
-  const widest = slotTexts.reduce((maxWidth, text) => {
-    return Math.max(maxWidth, estimatePresentationTokenTextWidth(text, scale));
+    return tokens.reduce((inner, token) => {
+      return Math.max(inner, estimatePresentationTokenTextWidth(String(token || ""), scale));
+    }, maxWidth);
   }, 0);
   return Math.max(52, widest + Math.round(16 * scale));
 }
@@ -1617,10 +1651,8 @@ function splitPresentationWordLayouts(wordLayouts, maxColumnsPerLine = 14) {
   let currentColumns = 0;
 
   wordLayouts.forEach((layout) => {
-    const cols = Array.isArray(layout?.columns) ? layout.columns.length : 0;
-    if (cols <= 0) {
-      return;
-    }
+    // A word with no phonetic data still occupies one column, shown as a placeholder.
+    const cols = Math.max(1, Array.isArray(layout?.columns) ? layout.columns.length : 0);
     if (current.length > 0 && currentColumns + cols > maxColumnsPerLine) {
       lines.push(current);
       current = [];
@@ -1637,55 +1669,111 @@ function splitPresentationWordLayouts(wordLayouts, maxColumnsPerLine = 14) {
   return lines;
 }
 
+// Two-glyph Improved Zhuyin symbols such as ㄧㄜ or ㄖㄨ are one phoneme; like the intonation site,
+// they are drawn as one card with the glyphs stacked. Modifiers like (喉) stay with their glyph.
+const PRESENTATION_ZHUYIN_GLYPH_RE = /[\u3105-\u312f](?:\([^)]*\)|[~"*])*/gu;
+
+function splitPresentationGlyphs(token) {
+  const text = String(token || "");
+  const glyphs = text.match(PRESENTATION_ZHUYIN_GLYPH_RE) || [];
+  return glyphs.length > 1 && glyphs.join("") === text.replace(/\*/g, "") ? glyphs : [text];
+}
+
+// No IPA / Zhuyin at all (e.g. a word missing from CMUdict): keep the word on screen with an empty
+// dashed card, so it is obvious that this word still needs to be filled in.
+function buildPresentationMissingGroup(layout, scale = 1) {
+  const group = document.createElement("div");
+  group.className = "presentation-word-group missing";
+  group.style.setProperty("--presentation-word-min-width", `${Math.max(72, estimatePresentationWordTextWidth(layout?.wordText, scale))}px`);
+
+  const wordCell = document.createElement("span");
+  wordCell.className = "presentation-word-cell presentation-word-span";
+  wordCell.textContent = layout?.wordText || "...";
+  group.appendChild(wordCell);
+
+  const stacks = document.createElement("div");
+  stacks.className = "presentation-syllable-stacks";
+  const stack = document.createElement("div");
+  stack.className = "presentation-syllable-stack";
+  const card = document.createElement("span");
+  card.className = "presentation-slot-cell missing-card";
+  card.textContent = "？";
+  card.title = "沒有對應的 IPA / 注音，請回到編輯頁補上";
+  stack.appendChild(card);
+  stacks.appendChild(stack);
+  group.appendChild(stacks);
+  return group;
+}
+
+// Each syllable is one vertical stack, like the intonation site: the onset consonants (C1), the
+// vowel (V) and the coda consonants (C2) each get their own cards from top to bottom. Several
+// consonants in the same slot stay touching, so a cluster reads as one composite block.
 function buildPresentationWordGroup(layout, scale = 1) {
   const columns = Array.isArray(layout?.columns) ? layout.columns : [];
   if (columns.length === 0) {
-    return null;
+    return buildPresentationMissingGroup(layout, scale);
   }
 
   const columnWidths = columns.map((column) => estimatePresentationColumnWidth(column, scale));
   const wordTextWidth = estimatePresentationWordTextWidth(layout.wordText, scale);
+  const columnGap = Math.max(8, Math.round(14 * scale));
   const contentWidth = Math.max(
     wordTextWidth,
-    columnWidths.reduce((sum, width) => sum + width, 0) + (Math.max(0, columns.length - 1) * Math.max(8, Math.round(14 * scale))),
+    columnWidths.reduce((sum, width) => sum + width, 0) + (Math.max(0, columns.length - 1) * columnGap),
   );
-  const columnTemplate = columnWidths.map((width) => `minmax(${Math.max(24, Math.round(width))}px, 1fr)`).join(" ");
 
   const group = document.createElement("div");
   group.className = "presentation-word-group";
   group.style.setProperty("--presentation-word-syllables", String(Math.max(1, columns.length)));
-  group.style.setProperty("--presentation-word-gap", `${Math.max(8, Math.round(14 * scale))}px`);
+  group.style.setProperty("--presentation-word-gap", `${columnGap}px`);
   group.style.setProperty("--presentation-word-min-width", `${Math.max(72, Math.round(contentWidth))}px`);
-  group.style.setProperty("--presentation-word-columns-template", columnTemplate || "minmax(72px, 1fr)");
 
   const wordCell = document.createElement("span");
   wordCell.className = "presentation-word-cell presentation-word-span";
   wordCell.textContent = layout.wordText || "...";
   group.appendChild(wordCell);
 
-  PRESENTATION_SLOT_ORDER.forEach((slot) => {
-    const slotRow = document.createElement("div");
-    slotRow.className = "presentation-word-slot-row";
-    const slotCells = document.createElement("div");
-    slotCells.className = "presentation-word-slot-cells";
+  const stacks = document.createElement("div");
+  stacks.className = "presentation-syllable-stacks";
 
-    columns.forEach((column) => {
-      const cell = document.createElement("span");
-      cell.className = "presentation-slot-cell";
+  columns.forEach((column, columnIdx) => {
+    const stack = document.createElement("div");
+    stack.className = "presentation-syllable-stack";
+    stack.style.minWidth = `${Math.max(24, Math.round(columnWidths[columnIdx]))}px`;
+
+    PRESENTATION_SLOT_ORDER.forEach((slot) => {
       const slotTokens = Array.isArray(column?.slots?.[slot]) ? column.slots[slot] : [];
       if (slotTokens.length === 0) {
-        cell.classList.add("empty");
-        cell.textContent = "-";
-      } else {
-        cell.textContent = slotTokens.join(" ");
+        return;
       }
-      slotCells.appendChild(cell);
+      const block = document.createElement("div");
+      block.className = `presentation-slot-block slot-${slot.toLowerCase()}`;
+      if (slotTokens.length > 1) {
+        block.classList.add("composite");
+      }
+      slotTokens.forEach((token) => {
+        const card = document.createElement("span");
+        card.className = "presentation-slot-cell";
+        const glyphs = splitPresentationGlyphs(token);
+        if (glyphs.length > 1) {
+          card.classList.add("stacked-glyphs");
+          glyphs.forEach((glyph) => {
+            const part = document.createElement("span");
+            part.textContent = glyph;
+            card.appendChild(part);
+          });
+        } else {
+          card.textContent = token;
+        }
+        block.appendChild(card);
+      });
+      stack.appendChild(block);
     });
 
-    slotRow.appendChild(slotCells);
-    group.appendChild(slotRow);
+    stacks.appendChild(stack);
   });
 
+  group.appendChild(stacks);
   return group;
 }
 
@@ -1713,7 +1801,7 @@ function buildPresentationSentenceMatrix(wordLayouts, scale = 1) {
     let lineColumns = 0;
 
     lineLayouts.forEach((layout) => {
-      lineColumns += Array.isArray(layout?.columns) ? layout.columns.length : 0;
+      lineColumns += Math.max(1, Array.isArray(layout?.columns) ? layout.columns.length : 0);
       const groupNode = buildPresentationWordGroup(layout, scale);
       if (groupNode) {
         groupsWrap.appendChild(groupNode);
@@ -1764,7 +1852,7 @@ function renderPresentation() {
   const row = document.createElement("div");
   row.className = "presentation-phoneme-row";
   const words = Array.isArray(sentence.words) ? sentence.words : [];
-  const wordLayouts = words.map((word) => buildPresentationWordLayout(word)).filter((layout) => layout.columns.length > 0);
+  const wordLayouts = words.map((word) => buildPresentationWordLayout(word)).filter((layout) => layout.wordText);
   const totalTokenCount = wordLayouts.reduce((sum, layout) => sum + Number(layout.tokenCount || 0), 0);
   const totalColumnCount = wordLayouts.reduce((sum, layout) => sum + Number(layout.columns.length || 0), 0);
 

@@ -1,6 +1,31 @@
 /* eslint-disable no-continue */
 (() => {
   const SCHEMA_VERSION = "0.1.0";
+  // Titles and the like are never sentence ends; the soft ones only continue when the next text starts
+  // in lower case or with a digit ("etc. and more"), otherwise "etc." may well close a sentence.
+  const HARD_ABBREVIATIONS = new Set(
+    "mr mrs ms mx dr prof sr jr st mt gen col capt lt sgt cpl hon rev vs cf fig".split(" ")
+  );
+  const SOFT_ABBREVIATIONS = new Set("etc ca approx inc ltd co dept est no".split(" "));
+
+  function endsWithAbbreviation(previous, following) {
+    const match = previous.match(/(?<![A-Za-z])([A-Za-z]+)\.$/);
+    if (!match) {
+      return false;
+    }
+    const word = match[1].toLowerCase();
+    const continuesLowercase = /^[a-z0-9]/.test(following);
+    if (HARD_ABBREVIATIONS.has(word)) {
+      return true;
+    }
+    if (SOFT_ABBREVIATIONS.has(word)) {
+      return continuesLowercase;
+    }
+    if (word.length === 1) {
+      return word === "i" || word === "a" ? continuesLowercase : true;
+    }
+    return false;
+  }
   const JASON_SLOT_ORDER = ["C1", "V", "C2"];
 
   const ARPABET_TO_IPA = {
@@ -1831,10 +1856,19 @@
         if (!line) {
           return;
         }
-        const parts = line.match(/[^.!?。！？]+(?:[.!?。！？]+|$)/g) || [];
+        // Closing brackets/quotes after the terminator belong to the same sentence: "(etc.)." stays whole.
+        const parts = line.match(/[^.!?。！？]+(?:[.!?。！？][.!?。！？)\]"'”’」』）]*|$)/g) || [];
+        const lineStart = sentences.length;
         parts.forEach((partRaw) => {
           const part = String(partRaw || "").replace(/\s+/g, " ").trim();
-          if (part) {
+          if (!part) {
+            return;
+          }
+          if (sentences.length > 0 && !/[A-Za-z0-9]/.test(part)) {
+            sentences[sentences.length - 1] += part;
+          } else if (sentences.length > lineStart && endsWithAbbreviation(sentences[sentences.length - 1], part)) {
+            sentences[sentences.length - 1] += `${/^\s/.test(String(partRaw)) ? " " : ""}${part}`;
+          } else {
             sentences.push(part);
           }
         });

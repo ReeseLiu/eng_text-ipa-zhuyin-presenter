@@ -12,6 +12,26 @@ class PipelineTest(unittest.TestCase):
             ["We read.", "They listen!"],
         )
 
+    def test_split_sentences_keeps_closing_brackets_with_sentence(self):
+        self.assertEqual(
+            pipeline.split_sentences('It was fun (cats, dogs, etc.). Next one! "Stop." Done'),
+            ['It was fun (cats, dogs, etc.).', 'Next one!', '"Stop."', 'Done'],
+        )
+        self.assertEqual(pipeline.split_sentences("Wait... what?!"), ["Wait...", "what?!"])
+
+    def test_split_sentences_keeps_abbreviations_inside_sentence(self):
+        cases = {
+            "Mr. Smith met Dr. Jones. They left.": ["Mr. Smith met Dr. Jones.", "They left."],
+            "Bring pens, etc. and paper. Go!": ["Bring pens, etc. and paper.", "Go!"],
+            "We sold pens, etc. Then we left.": ["We sold pens, etc.", "Then we left."],
+            "Use fruit, e.g. apples. Fine.": ["Use fruit, e.g. apples.", "Fine."],
+            "Harry S. Truman won. So do I. Next.": ["Harry S. Truman won.", "So do I.", "Next."],
+            "He lives in the U.S. now. Yes.": ["He lives in the U.S. now.", "Yes."],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(pipeline.split_sentences(text), expected)
+
     def test_split_sentences_treats_newline_as_boundary(self):
         self.assertEqual(
             pipeline.split_sentences("first line\nsecond line\nthird line"),

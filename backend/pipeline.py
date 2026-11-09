@@ -782,6 +782,31 @@ def export_payload_to_jason(
     ]
 
 
+# Titles and the like are never sentence ends; the soft ones only continue when the next text starts
+# in lower case or with a digit ("etc. and more"), otherwise "etc." may well close a sentence.
+HARD_ABBREVIATIONS = frozenset(
+    "mr mrs ms mx dr prof sr jr st mt gen col capt lt sgt cpl hon rev vs cf fig".split()
+)
+SOFT_ABBREVIATIONS = frozenset("etc ca approx inc ltd co dept est no".split())
+
+
+def _ends_with_abbreviation(previous: str, following: str) -> bool:
+    """True when `previous` ends in an abbreviation period that should not close the sentence."""
+    match = re.search(r"(?<![A-Za-z])([A-Za-z]+)\.$", previous)
+    if not match:
+        return False
+    word = match.group(1).lower()
+    continues_lowercase = bool(re.match(r"[a-z0-9]", following))
+    if word in HARD_ABBREVIATIONS:
+        return True
+    if word in SOFT_ABBREVIATIONS:
+        return continues_lowercase
+    if len(word) == 1:
+        # Initials and "e.g."/"U.S.": "I" and "a" are real words, so they need a lower-case continuation.
+        return continues_lowercase if word in ("i", "a") else True
+    return False
+
+
 class Pipeline:
     def __init__(self) -> None:
         self.g2p = SimpleG2P(CMUDICT_PATH)
@@ -802,10 +827,18 @@ class Pipeline:
             line_text = line.strip()
             if not line_text:
                 continue
-            parts = re.findall(r"[^.!?。！？]+(?:[.!?。！？]+|$)", line_text)
+            # Closing brackets/quotes after the terminator belong to the same sentence: "(etc.)." stays whole.
+            parts = re.findall(r"[^.!?。！？]+(?:[.!?。！？][.!?。！？)\]\"'”’」』）]*|$)", line_text)
+            line_start = len(sentences)
             for part in parts:
                 cleaned = re.sub(r"\s+", " ", part).strip()
-                if cleaned:
+                if not cleaned:
+                    continue
+                if sentences and not re.search(r"[A-Za-z0-9]", cleaned):
+                    sentences[-1] = f"{sentences[-1]}{cleaned}"
+                elif len(sentences) > line_start and _ends_with_abbreviation(sentences[-1], cleaned):
+                    sentences[-1] = f"{sentences[-1]}{' ' if part[:1].isspace() else ''}{cleaned}"
+                else:
                     sentences.append(cleaned)
         return sentences
 

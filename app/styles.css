@@ -560,9 +560,9 @@ button.secondary {
   --presentation-word-syllables: 1;
   --presentation-word-gap: 14px;
   --presentation-word-min-width: 72px;
-  --presentation-word-columns-template: minmax(var(--presentation-word-min-width), 1fr);
-  display: grid;
-  grid-template-rows: repeat(4, minmax(0, auto));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   row-gap: var(--presentation-row-gap, 14px);
   width: max-content;
   min-width: var(--presentation-word-min-width);
@@ -572,15 +572,6 @@ button.secondary {
   border: 1px solid rgba(198, 141, 92, 0.1);
 }
 
-.presentation-word-cell,
-.presentation-word-slot-cells {
-  display: grid;
-  grid-template-columns: var(--presentation-word-columns-template);
-  column-gap: var(--presentation-word-gap, 14px);
-  align-items: center;
-  justify-items: center;
-}
-
 .presentation-word-cell {
   display: flex;
   align-items: center;
@@ -588,10 +579,6 @@ button.secondary {
   min-width: var(--presentation-word-min-width);
   text-align: center;
   width: 100%;
-}
-
-.presentation-word-slot-row {
-  display: block;
 }
 
 .presentation-word-span {
@@ -604,6 +591,27 @@ button.secondary {
   white-space: nowrap;
 }
 
+.presentation-syllable-stacks {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--presentation-word-gap, 14px);
+}
+
+.presentation-syllable-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.presentation-slot-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .presentation-slot-cell {
   min-height: 1.4em;
   line-height: 1.15;
@@ -613,13 +621,55 @@ button.secondary {
   color: #324957;
   white-space: nowrap;
   border-radius: 10px;
-  background: rgba(220, 166, 115, 0.045);
-  padding: 0.05em 0.12em;
+  padding: 0.1em 0.3em;
+  border: 2px solid transparent;
+  background: #ffffff;
 }
 
-.presentation-slot-cell.empty {
-  color: #9aaab4;
-  background: rgba(220, 166, 115, 0.03);
+.presentation-slot-cell.stacked-glyphs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+}
+
+.presentation-word-group.missing {
+  border: 1px dashed #d9a441;
+  background: rgba(217, 164, 65, 0.08);
+}
+
+.presentation-slot-cell.missing-card {
+  border: 2px dashed #d9a441;
+  color: #b8862b;
+  background: transparent;
+  min-width: 2.2em;
+}
+
+/* Same colour code as the intonation site: onset outlined blue, vowel outlined pink, coda filled blue. */
+.slot-c1 .presentation-slot-cell {
+  border-color: #8fb8e6;
+}
+
+.slot-v .presentation-slot-cell {
+  border-color: #eea99f;
+}
+
+.slot-c2 .presentation-slot-cell {
+  background: #94bde8;
+  border-color: #94bde8;
+  color: #ffffff;
+}
+
+/* Cards of one cluster touch each other and read as a single tall block. */
+.presentation-slot-block.composite .presentation-slot-cell:not(:first-child) {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  margin-top: -2px;
+}
+
+.presentation-slot-block.composite .presentation-slot-cell:not(:last-child) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .presentation-main-controls {
@@ -746,8 +796,8 @@ button.secondary {
     padding: 7px 8px;
   }
 
-  .presentation-word-slot-cells {
-    column-gap: 10px;
+  .presentation-syllable-stacks {
+    gap: 10px;
   }
 
   .presentation-utility-cluster {
