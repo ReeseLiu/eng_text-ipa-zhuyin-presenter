@@ -52,11 +52,13 @@ def build_browser_data() -> dict:
     display_table = load_display_table(DATA_DIR / "display_mapping_table_syllable.csv")
     phonetic_number_table = load_phonetic_number_table(DATA_DIR / "display_mapping_table_phonetic_number.csv")
     display_exceptions = json.loads((DATA_DIR / "display_mapping_exceptions.json").read_text(encoding="utf-8"))
+    compound_seams = json.loads((DATA_DIR / "compound_seams.json").read_text(encoding="utf-8"))
     return {
         "cmudict_raw": cmudict_raw,
         "display_table": display_table,
         "phonetic_number_table": phonetic_number_table,
         "display_exceptions": display_exceptions,
+        "compound_seams": compound_seams,
     }
 
 

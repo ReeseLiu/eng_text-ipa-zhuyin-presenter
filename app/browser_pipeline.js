@@ -701,7 +701,7 @@
     return 1;
   }
 
-  function analyzeSyllableTokens(baseTokens) {
+  function analyzeSyllableTokens(baseTokens, seam = null) {
     if (!Array.isArray(baseTokens) || baseTokens.length === 0) {
       return [];
     }
@@ -775,9 +775,14 @@
         continue;
       }
 
-      const clusterNorm = middle.map((idx) => baseNorm[idx]);
-      const onsetCount = maxOnsetSize(clusterNorm);
-      const codaCount = Math.max(0, middle.length - onsetCount);
+      let codaCount;
+      if (Number.isInteger(seam) && middle[0] < seam && seam <= middle[middle.length - 1]) {
+        codaCount = seam - middle[0];
+      } else {
+        const clusterNorm = middle.map((idx) => baseNorm[idx]);
+        const onsetCount = maxOnsetSize(clusterNorm);
+        codaCount = Math.max(0, middle.length - onsetCount);
+      }
       const codaIndices = middle.slice(0, codaCount);
       const onsetIndices = middle.slice(codaCount);
 
@@ -812,10 +817,10 @@
     return { status: "failed", code, segments: [] };
   }
 
-  function syllableStartsForSplit(ipaTokens) {
+  function syllableStartsForSplit(ipaTokens, seam = null) {
     const starts = [];
     let previous = 0;
-    analyzeSyllableTokens(ipaTokens).forEach((detail) => {
+    analyzeSyllableTokens(ipaTokens, seam).forEach((detail) => {
       const syllableIndex = Number(detail.syllable_index) || 0;
       if (syllableIndex !== previous) {
         starts.push(Number(detail.index));
@@ -851,7 +856,7 @@
     return { chunks, low };
   }
 
-  function suggestSyllableSplit(wordText, ipaTokens, pronunciations, table) {
+  function suggestSyllableSplit(wordText, ipaTokens, pronunciations, table, seam = null) {
     const tokens = (Array.isArray(ipaTokens) ? ipaTokens : [])
       .map((token) => String(token ?? "").trim())
       .filter((token) => token);
@@ -910,7 +915,7 @@
     });
 
     const cuts = [];
-    for (const start of syllableStartsForSplit(tokens)) {
+    for (const start of syllableStartsForSplit(tokens, seam)) {
       if (inside.has(start) || !chunkStartAt.has(start)) {
         return syllableSplitFailure("cut_inside_chunk");
       }
@@ -1107,6 +1112,33 @@
 
   function normalizeExceptionWord(raw) {
     return normalizeWordToken(String(raw || "").replaceAll("’", "'"));
+  }
+
+  // Mirrors load_compound_seams_json / resolve_compound_seam in syllable_structure.py.
+  function loadCompoundSeamsJson(payload) {
+    const output = {};
+    const entries = payload && Array.isArray(payload.entries) ? payload.entries : [];
+    entries.forEach((item) => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+      const wordNorm = normalizeExceptionWord(item.word_norm);
+      const ipaKey = String(item.ipa || "").split(/\s+/).filter((token) => token).join(" ");
+      const seam = item.seam;
+      if (!wordNorm || !ipaKey || !Number.isInteger(seam) || seam <= 0) {
+        return;
+      }
+      (output[wordNorm] = output[wordNorm] || {})[ipaKey] = seam;
+    });
+    return output;
+  }
+
+  function resolveCompoundSeam(compoundSeams, wordText, ipaTokens) {
+    const wordRules = compoundSeams && compoundSeams[normalizeExceptionWord(wordText)];
+    if (!wordRules || !Object.prototype.hasOwnProperty.call(wordRules, ipaTokens.filter((token) => token).join(" "))) {
+      return null;
+    }
+    return wordRules[ipaTokens.filter((token) => token).join(" ")];
   }
 
   function loadDisplayExceptionsJson(payload) {
@@ -1839,6 +1871,7 @@
         return left.localeCompare(right);
       });
       this.displayExceptions = loadDisplayExceptionsJson(safeData.display_exceptions || {});
+      this.compoundSeams = loadCompoundSeamsJson(safeData.compound_seams || {});
       this.alignTable = safeData.align_table && typeof safeData.align_table === "object" ? safeData.align_table : null;
     }
 
@@ -1979,11 +2012,13 @@
       if (!table) {
         throw new Error("音節切分對照表尚未載入（browser_align.js）");
       }
+      const tokens = normalizeIpaTokens(ipaTokens);
       return suggestSyllableSplit(
         wordText,
-        normalizeIpaTokens(ipaTokens),
+        tokens,
         (word) => this.cmudictIpaPronunciations(word),
         table,
+        resolveCompoundSeam(this.compoundSeams, wordText, tokens),
       );
     }
 

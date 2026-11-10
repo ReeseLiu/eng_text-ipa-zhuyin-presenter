@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
+from pathlib import Path
 
 from .rules_conservative import is_vowel
+from .text_utils import normalize_word_token
 
 
 LEGAL_ONSET_CLUSTERS_2 = {
@@ -84,8 +87,47 @@ def _max_onset_size(cluster: list[str]) -> int:
     return 1
 
 
-def analyze_syllable_tokens(base_tokens: list[str]) -> list[dict]:
-    """Annotate each token with heuristic syllable C1/V/C2 information."""
+def _normalize_seam_word(raw: str) -> str:
+    return normalize_word_token(str(raw or "").replace("\u2019", "'"))
+
+
+def load_compound_seams_json(path: Path) -> dict[str, dict[str, int]]:
+    """Load ``data/compound_seams.json`` as ``{word_norm: {"ipa tokens": seam}}``."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    output: dict[str, dict[str, int]] = {}
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    if not isinstance(entries, list):
+        return output
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        word_norm = _normalize_seam_word(str(item.get("word_norm", "")))
+        ipa_key = " ".join(str(item.get("ipa", "")).split())
+        seam = item.get("seam")
+        if not word_norm or not ipa_key or isinstance(seam, bool) or not isinstance(seam, int) or seam <= 0:
+            continue
+        output.setdefault(word_norm, {})[ipa_key] = seam
+    return output
+
+
+def resolve_compound_seam(compound_seams: dict[str, dict[str, int]] | None, word_text: str | None, ipa_tokens: list[str]) -> int | None:
+    """Return the left-half IPA token count when (word, IPA) is a listed compound."""
+    if not compound_seams or not isinstance(compound_seams, dict):
+        return None
+    word_rules = compound_seams.get(_normalize_seam_word(str(word_text or "")))
+    if not isinstance(word_rules, dict):
+        return None
+    seam = word_rules.get(" ".join(token for token in ipa_tokens if token))
+    return seam if isinstance(seam, int) else None
+
+
+def analyze_syllable_tokens(base_tokens: list[str], seam: int | None = None) -> list[dict]:
+    """Annotate each token with heuristic syllable C1/V/C2 information.
+
+    ``seam`` is the number of tokens in the left half of a listed compound (see
+    ``resolve_compound_seam``). When the consonants between two vowels have tokens on
+    both sides of it, the boundary is fixed at the seam instead of the maximal onset.
+    """
     if not base_tokens:
         return []
 
@@ -145,9 +187,12 @@ def analyze_syllable_tokens(base_tokens: list[str]) -> list[dict]:
         if not middle:
             continue
 
-        cluster_norm = [base_norm[idx] for idx in middle]
-        onset_count = _max_onset_size(cluster_norm)
-        coda_count = max(0, len(middle) - onset_count)
+        if isinstance(seam, int) and not isinstance(seam, bool) and middle[0] < seam <= middle[-1]:
+            coda_count = seam - middle[0]
+        else:
+            cluster_norm = [base_norm[idx] for idx in middle]
+            onset_count = _max_onset_size(cluster_norm)
+            coda_count = max(0, len(middle) - onset_count)
 
         coda_indices = middle[:coda_count]
         onset_indices = middle[coda_count:]

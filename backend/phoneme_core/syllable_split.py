@@ -6,7 +6,8 @@ by ``tests/fixtures/syllable_split_cases.json``. See ADR 0001/0002.
 The grapheme–phoneme chunks come from ``data/syllable_align_table.json`` (built
 offline by ``scripts/build_align_table.py``). At runtime we only:
 
-1. syllabify the word's *current* IPA with ``analyze_syllable_tokens``;
+1. syllabify the word's *current* IPA with ``analyze_syllable_tokens``, at the
+   compound seam the caller passes for listed compounds;
 2. find the CMUdict pronunciation identical to that IPA;
 3. cut before the chunk holding each syllable's first phoneme (so silent
    letters stay with the left syllable).
@@ -45,9 +46,9 @@ def load_align_table(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _syllable_starts(ipa_tokens: list[str]) -> list[int]:
+def _syllable_starts(ipa_tokens: list[str], seam: int | None = None) -> list[int]:
     """Phoneme index of the first token of each syllable after the first."""
-    details = analyze_syllable_tokens(ipa_tokens)
+    details = analyze_syllable_tokens(ipa_tokens, seam)
     starts: list[int] = []
     previous = 0
     for detail in details:
@@ -87,11 +88,13 @@ def suggest_syllable_split(
     ipa_tokens: list[str],
     pronunciations: Callable[[str], list[list[str]] | None],
     table: dict[str, Any],
+    seam: int | None = None,
 ) -> dict[str, Any]:
     """Return ``{"status": "ok"|"not_applicable"|"failed", "code", "segments"}``.
 
     ``pronunciations(word)`` returns the CMUdict pronunciations of a lowercase
-    word as IPA token lists in CMUdict order, or ``None`` when absent.
+    word as IPA token lists in CMUdict order, or ``None`` when absent. ``seam`` is
+    the word's compound seam (``resolve_compound_seam``), if it has one.
     """
     tokens = [str(token).strip() for token in ipa_tokens or [] if str(token).strip()]
     if _syllable_count(tokens) < 2:
@@ -134,7 +137,7 @@ def suggest_syllable_split(
         phone += n_phones
 
     cuts: list[int] = []
-    for start in _syllable_starts(tokens):
+    for start in _syllable_starts(tokens, seam):
         if start in inside or start not in chunk_start_at:
             return _failure("cut_inside_chunk")
         if start in low:

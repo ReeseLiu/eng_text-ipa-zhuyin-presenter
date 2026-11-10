@@ -13,7 +13,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import backend.pipeline as pipeline_module
-from backend.phoneme_core.syllable_structure import analyze_syllable_tokens
+from backend.phoneme_core.syllable_structure import analyze_syllable_tokens, resolve_compound_seam
 from backend.pipeline import pipeline
 from backend.server import PresenterHandler
 
@@ -388,6 +388,58 @@ class SuggestRouteContractTest(unittest.TestCase):
                 else:
                     self.assertEqual(status, 400)
                     self.assertEqual(result, {"error": "bad_request"})
+
+
+class CompoundSeamTest(unittest.TestCase):
+    """Rule 12: a listed compound is cut at its seam instead of at the maximal onset."""
+
+    @staticmethod
+    def seam_items():
+        payload = json.loads((ROOT / "data" / "compound_seams.json").read_text(encoding="utf-8"))
+        return [{"word": e["word_norm"], "ipa": e["ipa"].split()} for e in payload["entries"]]
+
+    def test_listed_compounds_are_cut_at_the_seam(self):
+        for word, expected in {
+            "artwork": ["art", "work"],
+            "backyard": ["back", "yard"],
+            "blackwell": ["black", "well"],
+            "bookworm": ["book", "worm"],
+        }.items():
+            with self.subTest(word=word):
+                suggestion = pipeline.suggest_syllable_split(word, pipeline._cmudict_ipa_pronunciations(word)[0])
+                self.assertEqual(suggestion["status"], "ok", suggestion)
+                self.assertEqual(suggestion["segments"], expected)
+
+    def test_seam_is_the_only_difference(self):
+        word = "artwork"
+        ipa = pipeline._cmudict_ipa_pronunciations(word)[0]
+        with_seam = pipeline.suggest_syllable_split(word, ipa)
+        saved, pipeline.compound_seams = pipeline.compound_seams, {}
+        try:
+            without_seam = pipeline.suggest_syllable_split(word, ipa)
+        finally:
+            pipeline.compound_seams = saved
+        self.assertEqual(with_seam["segments"], ["art", "work"])
+        self.assertNotEqual(without_seam["segments"], with_seam["segments"])
+
+    def test_unlisted_words_and_other_ipa_are_unaffected(self):
+        seams = pipeline.compound_seams
+        ipa = pipeline._cmudict_ipa_pronunciations("artwork")[0]
+        self.assertEqual(resolve_compound_seam(seams, "artwork", ipa), 3)
+        self.assertIsNone(resolve_compound_seam(seams, "artwork", ipa[:-1] + ["g"]))
+        self.assertIsNone(resolve_compound_seam(seams, "table", ["t", "eɪ", "b", "ə", "l"]))
+        self.assertEqual(
+            pipeline.suggest_syllable_split("table", pipeline._cmudict_ipa_pronunciations("table")[0])["segments"],
+            ["ta", "ble"],
+        )
+
+    def test_browser_agrees_with_python_on_every_listed_compound(self):
+        items = self.seam_items()
+        self.assertGreater(len(items), 400)
+        browser = run_node(items)
+        for item, result in zip(items, browser):
+            expected = pipeline.suggest_syllable_split(item["word"], item["ipa"])
+            self.assertEqual(result["suggestion"], expected, item["word"])
 
 
 class AppFlowTest(unittest.TestCase):

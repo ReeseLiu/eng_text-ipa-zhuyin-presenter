@@ -16,7 +16,11 @@ from .phoneme_core.display_mapping import (
 )
 from .phoneme_core.g2p import MULTI_PHONEME_UNITS, SimpleG2P, sentence_to_canonical_words
 from .phoneme_core.syllable_split import load_align_table, suggest_syllable_split
-from .phoneme_core.syllable_structure import analyze_syllable_tokens
+from .phoneme_core.syllable_structure import (
+    analyze_syllable_tokens,
+    load_compound_seams_json,
+    resolve_compound_seam,
+)
 from .phoneme_core.text_utils import normalize_word_token
 
 
@@ -25,6 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 DISPLAY_TABLE_PATH = DATA_DIR / "display_mapping_table_syllable.csv"
 DISPLAY_EXCEPTIONS_PATH = DATA_DIR / "display_mapping_exceptions.json"
+COMPOUND_SEAMS_PATH = DATA_DIR / "compound_seams.json"
 PHONETIC_NUMBER_TABLE_PATH = DATA_DIR / "display_mapping_table_phonetic_number.csv"
 CMUDICT_PATH = DATA_DIR / "cmudict.dict"
 ALIGN_TABLE_PATH = DATA_DIR / "syllable_align_table.json"
@@ -812,6 +817,7 @@ class Pipeline:
         self.g2p = SimpleG2P(CMUDICT_PATH)
         self.display_table = load_display_table_csv(DISPLAY_TABLE_PATH)
         self.display_exceptions = load_display_exceptions_json(DISPLAY_EXCEPTIONS_PATH)
+        self.compound_seams = load_compound_seams_json(COMPOUND_SEAMS_PATH)
         self.phonetic_number_map, self.phonetic_number_symbols = load_phonetic_number_table_csv(PHONETIC_NUMBER_TABLE_PATH)
         self._align_table: dict[str, Any] | None = None
 
@@ -927,11 +933,13 @@ class Pipeline:
             raise ValueError("ipa must be a list of strings or a string")
         if self._align_table is None:
             self._align_table = load_align_table(ALIGN_TABLE_PATH)
+        tokens = normalize_ipa_tokens(ipa_tokens)
         return suggest_syllable_split(
             word_text,
-            normalize_ipa_tokens(ipa_tokens),
+            tokens,
             self._cmudict_ipa_pronunciations,
             self._align_table,
+            seam=resolve_compound_seam(self.compound_seams, word_text, tokens),
         )
 
     def export_json(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
